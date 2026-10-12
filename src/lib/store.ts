@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { canvasToBlob, fileToCanvas } from "@/lib/images";
+import { canvasToBlob, colorSwatchBlob, fileToCanvas } from "@/lib/images";
 import {
   loadHair,
   loadNails,
@@ -15,17 +15,22 @@ import {
 } from "@/lib/idb";
 import {
   clampMeasures,
+  guessZone,
+  LIMITS,
   ranges,
+  type DesignScope,
+  type FavoriteKind,
+  type MediaRef,
   type PersonKind,
   type TabId,
   type Zone,
 } from "@/lib/types";
 
-export type Garment = { id: string; zone: Zone; url: string; blob: Blob };
+export type Garment = MediaRef & { zone: Zone };
 
 export type FavoriteView = {
   id: string;
-  kind: "prenda" | "cabello";
+  kind: FavoriteKind;
   createdAt: number;
   meta: string;
   previewUrl: string;
@@ -47,8 +52,8 @@ type Profile = {
 type Hair = {
   selfieUrl: string | null;
   selfieBlob: Blob | null;
-  styleUrl: string | null;
-  styleBlob: Blob | null;
+  styles: MediaRef[];
+  activeStyleId: string | null;
   dye: string;
   intensity: number;
 };
@@ -58,8 +63,9 @@ type Nails = {
   handBlob: Blob | null;
   color: string;
   gloss: boolean;
-  designUrl: string | null;
-  designBlob: Blob | null;
+  designs: MediaRef[];
+  activeDesignId: string | null;
+  designScope: DesignScope;
 };
 
 type StudioState = {
@@ -80,25 +86,29 @@ type StudioState = {
   setStudio: (studio: boolean) => void;
   setMeasures: (measures: boolean) => void;
   setFace: (file: File) => Promise<void>;
-  addGarment: (file: File) => Promise<void>;
+  addGarments: (files: File[]) => Promise<void>;
   setGarmentZone: (id: string, zone: Zone) => void;
   removeGarment: (id: string) => void;
   setSelfie: (file: File) => Promise<void>;
-  setStyle: (file: File) => Promise<void>;
-  clearStyle: () => void;
+  addStyles: (files: File[]) => Promise<void>;
+  setActiveStyle: (id: string) => void;
+  removeStyle: (id: string) => void;
   setDye: (dye: string) => void;
   setIntensity: (intensity: number) => void;
   setHand: (file: File) => Promise<void>;
   setNailColor: (color: string) => void;
   setGloss: (gloss: boolean) => void;
-  setDesign: (file: File) => Promise<void>;
-  clearDesign: () => void;
+  addDesigns: (files: File[]) => Promise<void>;
+  setActiveDesign: (id: string) => void;
+  removeDesign: (id: string) => void;
+  setDesignScope: (scope: DesignScope) => void;
   saveFavorite: (input: {
-    kind: "prenda" | "cabello";
+    kind: FavoriteKind;
     meta: string;
     preview: Blob;
     sources: { label: string; blob: Blob }[];
   }) => Promise<void>;
+  buildSwatch: (hex: string) => Promise<Blob>;
   deleteFavorite: (id: string) => Promise<void>;
   wipe: () => Promise<void>;
 };
@@ -118,8 +128,8 @@ const emptyProfile = (): Profile => ({
 const emptyHair = (): Hair => ({
   selfieUrl: null,
   selfieBlob: null,
-  styleUrl: null,
-  styleBlob: null,
+  styles: [],
+  activeStyleId: null,
   dye: "castano",
   intensity: 0.7,
 });
@@ -129,8 +139,9 @@ const emptyNails = (): Nails => ({
   handBlob: null,
   color: "rojo",
   gloss: true,
-  designUrl: null,
-  designBlob: null,
+  designs: [],
+  activeDesignId: null,
+  designScope: "todas",
 });
 
 function urlOf(blob: Blob | null) {
@@ -168,7 +179,9 @@ function queueHair() {
     const hair = useStudio.getState().hair;
     void saveHair({
       selfie: hair.selfieBlob,
-      style: hair.styleBlob,
+      styles: hair.styles.map((item) => ({ id: item.id, blob: item.blob })),
+      activeStyleId: hair.activeStyleId,
+      style: null,
       dye: hair.dye,
       intensity: hair.intensity,
     });
@@ -184,7 +197,10 @@ function queueNails() {
       hand: nails.handBlob,
       color: nails.color,
       gloss: nails.gloss,
-      design: nails.designBlob,
+      designs: nails.designs.map((item) => ({ id: item.id, blob: item.blob })),
+      activeDesignId: nails.activeDesignId,
+      designScope: nails.designScope,
+      design: null,
     });
   }, 220);
 }
@@ -199,6 +215,10 @@ function revoke(url: string | null) {
   if (url) URL.revokeObjectURL(url);
 }
 
+function revokeAll(refs: MediaRef[]) {
+  refs.forEach((item) => revoke(item.url));
+}
+
 function viewFavorite(record: FavoriteRecord): FavoriteView {
   return {
     id: record.id,
@@ -211,6 +231,23 @@ function viewFavorite(record: FavoriteRecord): FavoriteView {
       url: URL.createObjectURL(source.blob),
     })),
   };
+}
+
+/** Older saves stored a single `style` / `design` blob instead of a list. */
+function fromLegacy(
+  photos: { id: string; blob: Blob }[] | undefined,
+  legacy: Blob | null | undefined,
+) {
+  const list = (photos ?? []).map((item) => ({
+    id: item.id,
+    blob: item.blob,
+    url: URL.createObjectURL(item.blob),
+  }));
+  if (list.length === 0 && legacy) {
+    const blob = legacy;
+    list.push({ id: crypto.randomUUID(), blob, url: URL.createObjectURL(blob) });
+  }
+  return list;
 }
 
 export const useStudio = create<StudioState>((set, get) => ({
@@ -233,6 +270,8 @@ export const useStudio = create<StudioState>((set, get) => ({
         loadNails(),
         queryFavorites("all"),
       ]);
+      const styles = hair ? fromLegacy(hair.styles, hair.style) : [];
+      const designs = nails ? fromLegacy(nails.designs, nails.design) : [];
       set({
         ready: true,
         memoryOk: true,
@@ -246,7 +285,7 @@ export const useStudio = create<StudioState>((set, get) => ({
               measures: profile.measures,
               faceBlob: profile.face,
               faceUrl: urlOf(profile.face),
-              garments: profile.garments.map((item) => ({
+              garments: (profile.garments ?? []).map((item) => ({
                 id: item.id,
                 zone: item.zone,
                 blob: item.blob,
@@ -260,8 +299,10 @@ export const useStudio = create<StudioState>((set, get) => ({
               intensity: hair.intensity,
               selfieBlob: hair.selfie,
               selfieUrl: urlOf(hair.selfie),
-              styleBlob: hair.style,
-              styleUrl: urlOf(hair.style),
+              styles,
+              activeStyleId: styles.some((item) => item.id === hair.activeStyleId)
+                ? hair.activeStyleId
+                : (styles[0]?.id ?? null),
             }
           : emptyHair(),
         nails: nails
@@ -270,8 +311,11 @@ export const useStudio = create<StudioState>((set, get) => ({
               gloss: nails.gloss,
               handBlob: nails.hand,
               handUrl: urlOf(nails.hand),
-              designBlob: nails.design,
-              designUrl: urlOf(nails.design),
+              designs,
+              activeDesignId: designs.some((item) => item.id === nails.activeDesignId)
+                ? nails.activeDesignId
+                : (designs[0]?.id ?? null),
+              designScope: nails.designScope ?? "todas",
             }
           : emptyNails(),
         favorites: favorites.map(viewFavorite),
@@ -323,15 +367,32 @@ export const useStudio = create<StudioState>((set, get) => ({
     set({ profile: { ...get().profile, faceUrl: image.url, faceBlob: image.blob }, note: "" });
     queueProfile();
   },
-  addGarment: async (file) => {
-    if (get().profile.garments.length >= 6) {
-      set({ note: "Puedes colocar hasta 6 prendas en la misma prueba." });
+  addGarments: async (files) => {
+    if (files.length === 0) return;
+    const current = get().profile.garments;
+    const room = LIMITS.garments - current.length;
+    if (room <= 0) {
+      set({ note: `El avatar ya tiene ${LIMITS.garments} prendas. Quita una para agregar otra.` });
       return;
     }
-    const image = await rememberFile(file, 800);
-    const zone: Zone = image.height / image.width > 1.45 ? "completo" : "superior";
-    const garment: Garment = { id: crypto.randomUUID(), zone, url: image.url, blob: image.blob };
-    set({ profile: { ...get().profile, garments: [...get().profile.garments, garment] }, note: "" });
+    const taken = files.slice(0, room);
+    const added: Garment[] = [];
+    for (const file of taken) {
+      const image = await rememberFile(file, 800);
+      added.push({
+        id: crypto.randomUUID(),
+        zone: guessZone(image.width, image.height),
+        url: image.url,
+        blob: image.blob,
+      });
+    }
+    set({
+      profile: { ...get().profile, garments: [...current, ...added] },
+      note:
+        added.length === 1
+          ? "Prenda agregada al avatar."
+          : `${added.length} prendas agregadas al avatar.`,
+    });
     queueProfile();
   },
   setGarmentZone: (id, zone) => {
@@ -347,7 +408,10 @@ export const useStudio = create<StudioState>((set, get) => ({
     const garment = get().profile.garments.find((item) => item.id === id);
     revoke(garment?.url ?? null);
     set({
-      profile: { ...get().profile, garments: get().profile.garments.filter((item) => item.id !== id) },
+      profile: {
+        ...get().profile,
+        garments: get().profile.garments.filter((item) => item.id !== id),
+      },
     });
     queueProfile();
   },
@@ -357,15 +421,49 @@ export const useStudio = create<StudioState>((set, get) => ({
     set({ hair: { ...get().hair, selfieUrl: image.url, selfieBlob: image.blob }, note: "" });
     queueHair();
   },
-  setStyle: async (file) => {
-    const image = await rememberFile(file, 800);
-    revoke(get().hair.styleUrl);
-    set({ hair: { ...get().hair, styleUrl: image.url, styleBlob: image.blob }, note: "" });
+  addStyles: async (files) => {
+    if (files.length === 0) return;
+    const current = get().hair.styles;
+    const room = LIMITS.styles - current.length;
+    if (room <= 0) {
+      set({ note: `Ya hay ${LIMITS.styles} peinados de referencia. Quita uno para agregar otro.` });
+      return;
+    }
+    const added: MediaRef[] = [];
+    for (const file of files.slice(0, room)) {
+      const image = await rememberFile(file, 800);
+      added.push({ id: crypto.randomUUID(), url: image.url, blob: image.blob });
+    }
+    set({
+      hair: {
+        ...get().hair,
+        styles: [...current, ...added],
+        activeStyleId: get().hair.activeStyleId ?? added[0]?.id ?? null,
+      },
+      note:
+        added.length === 1
+          ? "Peinado agregado al avatar."
+          : `${added.length} peinados agregados al avatar.`,
+    });
     queueHair();
   },
-  clearStyle: () => {
-    revoke(get().hair.styleUrl);
-    set({ hair: { ...get().hair, styleUrl: null, styleBlob: null } });
+  setActiveStyle: (id) => {
+    set({ hair: { ...get().hair, activeStyleId: id }, note: "" });
+    queueHair();
+  },
+  removeStyle: (id) => {
+    const styles = get().hair.styles;
+    const gone = styles.find((item) => item.id === id);
+    revoke(gone?.url ?? null);
+    const next = styles.filter((item) => item.id !== id);
+    set({
+      hair: {
+        ...get().hair,
+        styles: next,
+        activeStyleId:
+          get().hair.activeStyleId === id ? (next[0]?.id ?? null) : get().hair.activeStyleId,
+      },
+    });
     queueHair();
   },
   setDye: (dye) => {
@@ -390,15 +488,53 @@ export const useStudio = create<StudioState>((set, get) => ({
     set({ nails: { ...get().nails, gloss } });
     queueNails();
   },
-  setDesign: async (file) => {
-    const image = await rememberFile(file, 640);
-    revoke(get().nails.designUrl);
-    set({ nails: { ...get().nails, designUrl: image.url, designBlob: image.blob } });
+  addDesigns: async (files) => {
+    if (files.length === 0) return;
+    const current = get().nails.designs;
+    const room = LIMITS.designs - current.length;
+    if (room <= 0) {
+      set({ note: `Ya hay ${LIMITS.designs} diseños. Quita uno para agregar otro.` });
+      return;
+    }
+    const added: MediaRef[] = [];
+    for (const file of files.slice(0, room)) {
+      const image = await rememberFile(file, 640);
+      added.push({ id: crypto.randomUUID(), url: image.url, blob: image.blob });
+    }
+    set({
+      nails: {
+        ...get().nails,
+        designs: [...current, ...added],
+        activeDesignId: get().nails.activeDesignId ?? added[0]?.id ?? null,
+      },
+      note:
+        added.length === 1
+          ? "Diseño agregado a las uñas."
+          : `${added.length} diseños agregados a las uñas.`,
+    });
     queueNails();
   },
-  clearDesign: () => {
-    revoke(get().nails.designUrl);
-    set({ nails: { ...get().nails, designUrl: null, designBlob: null } });
+  setActiveDesign: (id) => {
+    set({ nails: { ...get().nails, activeDesignId: id } });
+    queueNails();
+  },
+  removeDesign: (id) => {
+    const designs = get().nails.designs;
+    const gone = designs.find((item) => item.id === id);
+    revoke(gone?.url ?? null);
+    const next = designs.filter((item) => item.id !== id);
+    set({
+      nails: {
+        ...get().nails,
+        designs: next,
+        activeDesignId:
+          get().nails.activeDesignId === id ? (next[0]?.id ?? null) : get().nails.activeDesignId,
+      },
+    });
+    queueNails();
+  },
+  setDesignScope: (designScope) => {
+    set({ nails: { ...get().nails, designScope } });
     queueNails();
   },
   saveFavorite: async (input) => {
@@ -416,6 +552,7 @@ export const useStudio = create<StudioState>((set, get) => ({
       note: "Guardado en favoritos.",
     });
   },
+  buildSwatch: (hex) => colorSwatchBlob(hex),
   deleteFavorite: async (id) => {
     const current = get().favorites.find((item) => item.id === id);
     if (current) {
@@ -428,11 +565,11 @@ export const useStudio = create<StudioState>((set, get) => ({
   wipe: async () => {
     const { profile, hair, nails, favorites } = get();
     revoke(profile.faceUrl);
-    profile.garments.forEach((item) => revoke(item.url));
+    revokeAll(profile.garments);
     revoke(hair.selfieUrl);
-    revoke(hair.styleUrl);
+    revokeAll(hair.styles);
     revoke(nails.handUrl);
-    revoke(nails.designUrl);
+    revokeAll(nails.designs);
     favorites.forEach((item) => {
       revoke(item.previewUrl);
       item.sources.forEach((source) => revoke(source.url));

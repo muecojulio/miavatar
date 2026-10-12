@@ -171,3 +171,131 @@ export function Note({ children }: { children: ReactNode }) {
     </p>
   );
 }
+
+/** Camera or gallery, accepting more than one photo at a time. */
+export function MultiPhotoButtons({
+  takeLabel,
+  pickLabel,
+  onFiles,
+}: {
+  takeLabel: string;
+  pickLabel: string;
+  onFiles: (files: File[]) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <label className="tap inline-flex min-h-11 items-center justify-center rounded-full bg-surface px-3 text-center text-sm font-medium text-fg">
+        {takeLabel}
+        <input
+          className="sr-only"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            event.target.value = "";
+            if (files.length) onFiles(files);
+          }}
+        />
+      </label>
+      <label className="tap inline-flex min-h-11 items-center justify-center rounded-full bg-surface px-3 text-center text-sm font-medium text-fg">
+        {pickLabel}
+        <input
+          className="sr-only"
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            event.target.value = "";
+            if (files.length) onFiles(files);
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+/** Horizontal gallery of the photos already inside the avatar. */
+export function ThumbPicks({
+  items,
+  activeId = null,
+  onPick,
+  onRemove,
+  empty,
+}: {
+  items: { id: string; url: string; caption?: string }[];
+  activeId?: string | null;
+  onPick?: (id: string) => void;
+  onRemove: (id: string) => void;
+  empty?: ReactNode;
+}) {
+  if (items.length === 0 && empty) return <>{empty}</>;
+  return (
+    <ul className="flex gap-3 overflow-x-auto pb-1">
+      {items.map((item) => {
+        const active = activeId === item.id;
+        return (
+          <li key={item.id} className="shrink-0">
+            <button
+              type="button"
+              aria-pressed={onPick ? active : undefined}
+              onClick={() => onPick?.(item.id)}
+              className={cn(
+                "tap block overflow-hidden rounded-2xl outline outline-2",
+                active ? "outline-accent" : "outline-transparent",
+              )}
+            >
+              <img src={item.url} alt={item.caption ?? ""} className="size-20 object-cover" />
+              {item.caption ? (
+                <span className="block max-w-20 truncate bg-surface px-1 py-1 text-xs text-muted">
+                  {item.caption}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemove(item.id)}
+              className="tap mt-1 w-full text-xs text-muted"
+              aria-label={`Quitar ${item.caption ?? "esta foto"}`}
+            >
+              Quitar
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Choice row for two or three short options. */
+export function Choices<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { id: T; label: string }[];
+  value: T;
+  onChange: (id: T) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          aria-pressed={option.id === value}
+          onClick={() => onChange(option.id)}
+          className={cn(
+            "tap min-h-9 rounded-full px-3 text-xs",
+            option.id === value
+              ? "bg-accent text-bg"
+              : "bg-surface text-muted outline outline-1 outline-fg/15",
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}

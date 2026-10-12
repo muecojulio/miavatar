@@ -1,4 +1,4 @@
-import type { PersonKind, Zone } from "@/lib/types";
+import type { DesignScope, FavoriteKind, PersonKind, Zone } from "@/lib/types";
 
 const DB_NAME = "miavatar";
 const DB_VERSION = 1;
@@ -14,23 +14,34 @@ export type ProfileRecord = {
   garments: { id: string; zone: Zone; blob: Blob }[];
 };
 
+export type StoredPhoto = { id: string; blob: Blob };
+
 export type HairRecord = {
   selfie: Blob | null;
-  style: Blob | null;
+  /** Reference hairstyle photos, added one after another. */
+  styles: StoredPhoto[];
+  activeStyleId: string | null;
   dye: string;
   intensity: number;
+  /** Older saves kept a single style; still readable. */
+  style?: Blob | null;
 };
 
 export type NailsRecord = {
   hand: Blob | null;
   color: string;
   gloss: boolean;
-  design: Blob | null;
+  /** Reference nail-art photos, added one after another. */
+  designs: StoredPhoto[];
+  activeDesignId: string | null;
+  designScope: DesignScope;
+  /** Older saves kept a single design; still readable. */
+  design?: Blob | null;
 };
 
 export type FavoriteRecord = {
   id: string;
-  kind: "prenda" | "cabello";
+  kind: FavoriteKind;
   createdAt: number;
   meta: string;
   preview: Blob;
@@ -96,7 +107,7 @@ export function saveNails(record: NailsRecord) {
   return kvSet("nails", record);
 }
 
-export async function queryFavorites(kind: "prenda" | "cabello" | "all") {
+export async function queryFavorites(kind: FavoriteKind | "all") {
   const db = await openDb();
   const tx = db.transaction("favorites", "readonly");
   const store = tx.objectStore("favorites");

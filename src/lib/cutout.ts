@@ -1,8 +1,4 @@
-function colorDist(
-  data: Uint8ClampedArray,
-  index: number,
-  rgb: [number, number, number],
-) {
+function colorDist(data: Uint8ClampedArray, index: number, rgb: [number, number, number]) {
   const dr = data[index] - rgb[0];
   const dg = data[index + 1] - rgb[1];
   const db = data[index + 2] - rgb[2];
@@ -12,7 +8,7 @@ function colorDist(
 export function opaqueRatio(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return 1;
-  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
   let seen = 0;
   let opaque = 0;
   for (let i = 3; i < data.length; i += 16) {
@@ -24,7 +20,8 @@ export function opaqueRatio(canvas: HTMLCanvasElement) {
 
 export function removeBackground(source: CanvasImageSource & { width: number; height: number }) {
   const srcW = "naturalWidth" in source && source.naturalWidth ? source.naturalWidth : source.width;
-  const srcH = "naturalHeight" in source && source.naturalHeight ? source.naturalHeight : source.height;
+  const srcH =
+    "naturalHeight" in source && source.naturalHeight ? source.naturalHeight : source.height;
   const canvas = document.createElement("canvas");
   canvas.width = srcW;
   canvas.height = srcH;
@@ -89,4 +86,71 @@ export function removeBackground(source: CanvasImageSource & { width: number; he
   }
   ctx.putImageData(frame, 0, 0);
   return canvas;
+}
+
+/** Tight box around the visible pixels of a cut-out, or the full canvas. */
+export function opaqueBounds(source: HTMLCanvasElement) {
+  const ctx = source.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return { x: 0, y: 0, w: source.width, h: source.height };
+  const { data, width, height } = ctx.getImageData(0, 0, source.width, source.height);
+  let minX = width;
+  let minY = height;
+  let maxX = 0;
+  let maxY = 0;
+  let found = false;
+  for (let y = 0; y < height; y += 2) {
+    for (let x = 0; x < width; x += 2) {
+      if (data[(y * width + x) * 4 + 3] > 20) {
+        found = true;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (!found) return { x: 0, y: 0, w: width, h: height };
+  return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+}
+
+/**
+ * Crop a cut-out to the garment itself, so a photo with margins still fills the
+ * figure instead of floating inside it.
+ */
+export function cropToBounds(source: HTMLCanvasElement) {
+  const box = opaqueBounds(source);
+  if (box.x === 0 && box.y === 0 && box.w === source.width && box.h === source.height)
+    return source;
+  const canvas = document.createElement("canvas");
+  canvas.width = box.w;
+  canvas.height = box.h;
+  canvas.getContext("2d")?.drawImage(source, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+  return canvas;
+}
+
+/** Average colour of the visible pixels — the fabric tone of a garment photo. */
+export function dominantColor(
+  source: CanvasImageSource & { width: number; height: number },
+  fallback = "#3f4a55",
+) {
+  const canvas = document.createElement("canvas");
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return fallback;
+  ctx.drawImage(source, 0, 0, source.width, source.height);
+  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let seen = 0;
+  for (let i = 0; i < data.length; i += 16) {
+    if (data[i + 3] < 90) continue;
+    r += data[i];
+    g += data[i + 1];
+    b += data[i + 2];
+    seen += 1;
+  }
+  if (!seen) return fallback;
+  return `rgb(${Math.round(r / seen)}, ${Math.round(g / seen)}, ${Math.round(b / seen)})`;
 }

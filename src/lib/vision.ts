@@ -5,14 +5,22 @@ export type Point = { x: number; y: number };
 export type PersonAnalysis = {
   image: HTMLCanvasElement;
   cutout: HTMLCanvasElement;
+  /** Just the hair: used to dye it without touching the rest. */
   hairMask: HTMLCanvasElement;
+  /**
+   * Face, neck and skin, without hair nor clothes. A reference hairstyle is
+   * painted under this layer, so it falls over the head and never over the face.
+   */
+  skinLayer: HTMLCanvasElement;
   landmarks: Point[] | null;
   skin: string;
   hair: string;
   mode: "multiclass" | "person" | "fallback";
 };
 
-type Fileset = Awaited<ReturnType<(typeof import("@mediapipe/tasks-vision"))["FilesetResolver"]["forVisionTasks"]>>;
+type Fileset = Awaited<
+  ReturnType<(typeof import("@mediapipe/tasks-vision"))["FilesetResolver"]["forVisionTasks"]>
+>;
 
 function asset(path: string) {
   const prefix =
@@ -38,11 +46,21 @@ async function fileset() {
 }
 
 type Segmenter = {
-  segment: (image: HTMLCanvasElement) => { categoryMask?: { width: number; height: number; getAsUint8Array: () => Uint8Array; close: () => void } };
+  segment: (image: HTMLCanvasElement) => {
+    categoryMask?: {
+      width: number;
+      height: number;
+      getAsUint8Array: () => Uint8Array;
+      close: () => void;
+    };
+  };
   getLabels: () => string[];
 };
 
-let segmenterPromise: Promise<{ segmenter: Segmenter; mode: "multiclass" | "person" } | null> | null = null;
+let segmenterPromise: Promise<{
+  segmenter: Segmenter;
+  mode: "multiclass" | "person";
+} | null> | null = null;
 
 async function segmenter() {
   if (!segmenterPromise) {
@@ -71,7 +89,9 @@ async function segmenter() {
   return segmenterPromise;
 }
 
-let facePromise: Promise<{ detect: (image: HTMLCanvasElement) => { faceLandmarks: { x: number; y: number }[][] } } | null> | null = null;
+let facePromise: Promise<{
+  detect: (image: HTMLCanvasElement) => { faceLandmarks: { x: number; y: number }[][] };
+} | null> | null = null;
 
 async function landmarker() {
   if (!facePromise) {
@@ -90,7 +110,9 @@ async function landmarker() {
   return facePromise;
 }
 
-let handPromise: Promise<{ detect: (image: HTMLCanvasElement) => { landmarks: { x: number; y: number }[][] } } | null> | null = null;
+let handPromise: Promise<{
+  detect: (image: HTMLCanvasElement) => { landmarks: { x: number; y: number }[][] };
+} | null> | null = null;
 
 async function hands() {
   if (!handPromise) {
@@ -108,9 +130,12 @@ async function hands() {
 }
 
 function toCanvas(source: CanvasImageSource & { width: number; height: number }) {
-  const width = source instanceof HTMLImageElement ? source.naturalWidth || source.width : source.width;
-  const height = source instanceof HTMLImageElement ? source.naturalHeight || source.height : source.height;
-  if (source instanceof HTMLCanvasElement && source.width === width && source.height === height) return source;
+  const width =
+    source instanceof HTMLImageElement ? source.naturalWidth || source.width : source.width;
+  const height =
+    source instanceof HTMLImageElement ? source.naturalHeight || source.height : source.height;
+  if (source instanceof HTMLCanvasElement && source.width === width && source.height === height)
+    return source;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -244,6 +269,8 @@ export async function analyzePerson(
   let mode: PersonAnalysis["mode"] = "fallback";
   let personMask = ellipseMask(w, h, landmarks);
   let hairMask = hairFallback(w, h, landmarks);
+  // 1 = pelo, 2 = piel del cuerpo, 3 = piel del rostro, 4 = ropa (modelo multiclase)
+  let skinMask: HTMLCanvasElement | null = null;
   try {
     const ready = await segmenter();
     if (ready) {
@@ -252,8 +279,23 @@ export async function analyzePerson(
       if (mask) {
         const cats = mask.getAsUint8Array();
         if (ready.mode === "multiclass") {
-          personMask = maskCanvas(cats, mask.width, mask.height, w, h, (value) => value === 1 || value === 2 || value === 3);
+          personMask = maskCanvas(
+            cats,
+            mask.width,
+            mask.height,
+            w,
+            h,
+            (value) => value > 0 && value < 4,
+          );
           hairMask = maskCanvas(cats, mask.width, mask.height, w, h, (value) => value === 1);
+          skinMask = maskCanvas(
+            cats,
+            mask.width,
+            mask.height,
+            w,
+            h,
+            (value) => value === 2 || value === 3,
+          );
           mode = "multiclass";
         } else {
           personMask = maskCanvas(cats, mask.width, mask.height, w, h, (value) => value === 1);
@@ -267,16 +309,16 @@ export async function analyzePerson(
   }
 
   const cutout = applyMask(image, personMask);
+  const skinLayer = skinMask ? applyMask(image, skinMask) : cutout;
   const skin =
-    (landmarks && landmarks[50]
-      ? sample(image, landmarks[50].x * w, landmarks[50].y * h)
-      : null) ?? "#c9956c";
+    (landmarks && landmarks[50] ? sample(image, landmarks[50].x * w, landmarks[50].y * h) : null) ??
+    "#c9956c";
   const hairPoint = landmarks?.[10];
   const hair =
     (hairPoint ? sample(image, hairPoint.x * w, Math.max(0, hairPoint.y * h - w * 0.08)) : null) ??
     "#3a2a24";
 
-  return { image, cutout, hairMask, landmarks, skin, hair, mode };
+  return { image, cutout, hairMask, skinLayer, landmarks, skin, hair, mode };
 }
 
 export async function detectHands(source: HTMLCanvasElement): Promise<Point[][]> {
@@ -299,7 +341,14 @@ export async function hairCutout(source: CanvasImageSource & { width: number; he
       const mask = result.categoryMask;
       if (mask) {
         const cats = mask.getAsUint8Array();
-        const hair = maskCanvas(cats, mask.width, mask.height, image.width, image.height, (value) => value === 1);
+        const hair = maskCanvas(
+          cats,
+          mask.width,
+          mask.height,
+          image.width,
+          image.height,
+          (value) => value === 1,
+        );
         mask.close();
         return applyMask(image, hair);
       }

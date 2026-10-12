@@ -53,10 +53,40 @@ export const NAILS = [
   { id: "champagne", label: "Champagne", hex: "#c6a36a" },
 ] as const;
 
+/** Where the uploaded nail design is painted. */
+export type DesignScope = "todas" | "acento";
+
+export const DESIGN_SCOPES: { id: DesignScope; label: string }[] = [
+  { id: "todas", label: "Todas" },
+  { id: "acento", label: "Uña de acento" },
+];
+
+export type FavoriteKind = "prenda" | "cabello" | "unas";
+
+export const FAVORITE_KINDS: { id: FavoriteKind; label: string; plural: string }[] = [
+  { id: "prenda", label: "Prendas", plural: "Prendas" },
+  { id: "cabello", label: "Cabello", plural: "Peinados y tintes" },
+  { id: "unas", label: "Uñas", plural: "Uñas" },
+];
+
+/** How many photos the avatar accepts at once in each section. */
+export const LIMITS = { garments: 12, styles: 8, designs: 8 } as const;
+
+/** A photo kept in memory (and in the local database) with its preview URL. */
+export type MediaRef = {
+  id: string;
+  blob: Blob;
+  url: string;
+};
+
 export type TabId = "prendas" | "cabello" | "unas" | "favoritos" | "privacidad" | "instalar";
 
 export function kindLabel(kind: PersonKind | null) {
   return KINDS.find((item) => item.id === kind)?.label ?? "Sin elegir";
+}
+
+export function favoriteKindLabel(kind: FavoriteKind) {
+  return FAVORITE_KINDS.find((item) => item.id === kind)?.plural ?? "";
 }
 
 export function showsNails(kind: PersonKind | null) {
@@ -88,4 +118,13 @@ export function dyeById(id: string) {
 
 export function nailById(id: string) {
   return NAILS.find((item) => item.id === id) ?? NAILS[3];
+}
+
+/**
+ * A tall photo is taken as a full look (dress, suit), anything else as a top.
+ * Used to place an uploaded garment on the right part of the figure.
+ */
+export function guessZone(width: number, height: number): Zone {
+  if (!width || !height) return "superior";
+  return height / width > 1.45 ? "completo" : "superior";
 }

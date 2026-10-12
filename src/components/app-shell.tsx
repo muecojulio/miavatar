@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Hand, Heart, Scissors, Shirt, Shield, QrCode } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Hand, Heart, QrCode, Scissors, Shield, Shirt } from "lucide-react";
 import { CabelloPanel } from "@/components/cabello-panel";
 import { FavoritosPanel } from "@/components/favoritos-panel";
 import { PrendasPanel } from "@/components/prendas-panel";
@@ -15,8 +15,11 @@ const TABS: { id: TabId; label: string; icon: typeof Shirt }[] = [
   { id: "cabello", label: "Cabello", icon: Scissors },
   { id: "unas", label: "Uñas", icon: Hand },
   { id: "favoritos", label: "Favoritos", icon: Heart },
-  { id: "privacidad", label: "Privacidad", icon: Shield },
+];
+
+const EXTRAS: { id: TabId; label: string; icon: typeof Shirt }[] = [
   { id: "instalar", label: "Instalar", icon: QrCode },
+  { id: "privacidad", label: "Privacidad", icon: Shield },
 ];
 
 export function AppShell() {
@@ -26,19 +29,47 @@ export function AppShell() {
   const memoryOk = useStudio((state) => state.memoryOk);
   const init = useStudio((state) => state.init);
   const setTab = useStudio((state) => state.setTab);
+  const [lastCore, setLastCore] = useState<TabId>("prendas");
   const nails = showsNails(kind);
   const visible = TABS.filter((item) => item.id !== "unas" || nails);
+  const extra = EXTRAS.some((item) => item.id === tab);
 
   useEffect(() => {
     void init();
   }, [init]);
 
+  useEffect(() => {
+    if (TABS.some((item) => item.id === tab)) setLastCore(tab);
+  }, [tab]);
+
   return (
     <main className="mx-auto min-h-dvh max-w-md px-4 pb-28 pt-6">
-      <header className="mb-5">
+      <header className="mb-5 flex items-start justify-between gap-4">
         <div>
           <p className="font-display text-4xl leading-none">miavatar</p>
           <p className="mt-2 text-sm text-muted">Mírate antes de usarlo</p>
+        </div>
+        <div className="flex gap-1">
+          {EXTRAS.map((item) => {
+            const Icon = item.icon;
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                aria-label={item.label}
+                title={item.label}
+                aria-pressed={active}
+                onClick={() => setTab(active ? lastCore : item.id)}
+                className={cn(
+                  "tap grid size-11 place-items-center rounded-full",
+                  active ? "bg-accent text-bg" : "bg-surface text-muted",
+                )}
+              >
+                <Icon className="size-5" />
+              </button>
+            );
+          })}
         </div>
       </header>
 
@@ -47,6 +78,17 @@ export function AppShell() {
           La memoria de este navegador no está disponible. La prueba funciona, pero no queda
           guardada.
         </p>
+      ) : null}
+
+      {extra ? (
+        <button
+          type="button"
+          className="tap mb-4 inline-flex min-h-11 items-center gap-2 text-sm text-muted"
+          onClick={() => setTab(lastCore)}
+        >
+          <ArrowLeft className="size-4" />
+          Volver al avatar
+        </button>
       ) : null}
 
       {tab === "prendas" ? <PrendasPanel /> : null}

@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { Heart } from "lucide-react";
+import { MorePhotos } from "@/components/more-photos";
+import { Button, Choices, Note, PhotoButtons, Swatches, ThumbPicks, Toggle } from "@/components/ui";
 import { drawNails } from "@/lib/draw-nails";
-import { loadImage } from "@/lib/images";
+import { cropToBounds, opaqueRatio, removeBackground } from "@/lib/cutout";
+import { canvasToBlob, loadImage } from "@/lib/images";
 import { useStudio } from "@/lib/store";
-import { NAILS, nailById } from "@/lib/types";
+import { DESIGN_SCOPES, NAILS, nailById } from "@/lib/types";
 import { detectHands } from "@/lib/vision";
-import { Note, PhotoButtons, Swatches, Toggle } from "@/components/ui";
 
 export function UnasPanel() {
   const nails = useStudio((state) => state.nails);
@@ -12,14 +15,46 @@ export function UnasPanel() {
   const setHand = useStudio((state) => state.setHand);
   const setNailColor = useStudio((state) => state.setNailColor);
   const setGloss = useStudio((state) => state.setGloss);
-  const setDesign = useStudio((state) => state.setDesign);
-  const clearDesign = useStudio((state) => state.clearDesign);
+  const addDesigns = useStudio((state) => state.addDesigns);
+  const setActiveDesign = useStudio((state) => state.setActiveDesign);
+  const removeDesign = useStudio((state) => state.removeDesign);
+  const setDesignScope = useStudio((state) => state.setDesignScope);
+  const saveFavorite = useStudio((state) => state.saveFavorite);
+  const buildSwatch = useStudio((state) => state.buildSwatch);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [photo, setPhoto] = useState<HTMLCanvasElement | null>(null);
   const [design, setDesignCanvas] = useState<HTMLCanvasElement | null>(null);
   const [count, setCount] = useState<number | null>(null);
   const [pending, setPending] = useState(false);
   const color = nailById(nails.color);
+  const activeDesign =
+    nails.designs.find((item) => item.id === nails.activeDesignId) ?? nails.designs[0] ?? null;
+
+  useEffect(() => {
+    if (!activeDesign) {
+      setDesignCanvas(null);
+      return;
+    }
+    let cancel = false;
+    void loadImage(activeDesign.url).then((img) => {
+      if (cancel) return;
+      // A design is usually a photo of nail art on a plain surface: keep just
+      // the motif, so the polish underneath stays visible.
+      const cut = removeBackground(img);
+      const ratio = opaqueRatio(cut);
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(ratio > 0.04 && ratio < 0.97 ? cut : img, 0, 0);
+      }
+      setDesignCanvas(cropToBounds(canvas));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [activeDesign]);
 
   useEffect(() => {
     if (!nails.handUrl) {
@@ -46,7 +81,15 @@ export function UnasPanel() {
         const ctx = view.getContext("2d");
         if (ctx) {
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          const painted = drawNails(ctx, canvas, found, color.hex, nails.gloss, design);
+          const painted = drawNails(
+            ctx,
+            canvas,
+            found,
+            color.hex,
+            nails.gloss,
+            design,
+            nails.designScope,
+          );
           setCount(painted);
         }
       } else {
@@ -57,39 +100,40 @@ export function UnasPanel() {
     return () => {
       cancel = true;
     };
-  }, [color.hex, design, nails.gloss, nails.handUrl]);
+  }, [color.hex, design, nails.designScope, nails.gloss, nails.handUrl]);
 
-  useEffect(() => {
-    if (!nails.designUrl) {
-      setDesignCanvas(null);
-      return;
-    }
-    let cancel = false;
-    void loadImage(nails.designUrl).then((img) => {
-      if (cancel) return;
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      canvas.getContext("2d")?.drawImage(img, 0, 0);
-      setDesignCanvas(canvas);
+  async function favorite() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const preview = await canvasToBlob(canvas, "image/jpeg", 0.84);
+    const sources: { label: string; blob: Blob }[] = [];
+    if (activeDesign) sources.push({ label: "Diseño", blob: activeDesign.blob });
+    sources.push({ label: `Color · ${color.label}`, blob: await buildSwatch(color.hex) });
+    await saveFavorite({
+      kind: "unas",
+      meta: `${color.label} · ${activeDesign ? `diseño en ${nails.designScope === "todas" ? "todas las uñas" : "uña de acento"}` : "sin diseño"}`,
+      preview,
+      sources,
     });
-    return () => {
-      cancel = true;
-    };
-  }, [nails.designUrl]);
+  }
 
   return (
     <div className="panel space-y-5">
       <div>
         <h2 className="font-display text-3xl leading-tight">Uñas</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          Foto de tu mano, palma abierta y uñas a la vista. El color y el diseño se aplican sobre ellas.
+          Foto de tu mano, palma abierta y uñas a la vista. El color y el diseño se aplican sobre
+          ellas.
         </p>
       </div>
 
       {nails.handUrl ? (
         <div className="overflow-hidden rounded-3xl bg-fg">
-          <canvas ref={canvasRef} className="w-full" aria-label="Vista previa del esmalte en la mano" />
+          <canvas
+            ref={canvasRef}
+            className="w-full"
+            aria-label="Vista previa del esmalte en la mano"
+          />
         </div>
       ) : (
         <div className="flex min-h-64 flex-col justify-end rounded-3xl bg-fg p-6 text-bg">
@@ -99,9 +143,20 @@ export function UnasPanel() {
 
       {pending ? <p className="text-sm text-muted">Buscando las uñas…</p> : null}
       {count === 0 ? (
-        <p className="text-sm text-accent">No ubiqué la mano. Prueba con más luz y los dedos separados.</p>
+        <p className="text-sm text-accent">
+          No ubiqué la mano. Prueba con más luz y los dedos separados.
+        </p>
       ) : null}
-      {photo && count ? <p className="text-sm text-muted">{count} uñas marcadas.</p> : null}
+      {photo && count ? (
+        <p className="text-sm text-muted">
+          {count} uñas marcadas
+          {activeDesign
+            ? nails.designScope === "todas"
+              ? " con el diseño."
+              : " (el diseño va en la uña de acento)."
+            : "."}
+        </p>
+      ) : null}
       <Note>{note}</Note>
 
       <PhotoButtons
@@ -116,19 +171,34 @@ export function UnasPanel() {
         <Toggle label="Brillo" checked={nails.gloss} onCheckedChange={setGloss} />
       </section>
 
-      <section className="space-y-3">
-        <h3 className="text-sm text-muted">Diseño</h3>
-        <PhotoButtons
-          takeLabel="Foto del diseño"
-          pickLabel={nails.designUrl ? "Cambiar diseño" : "Elegir diseño"}
-          onFile={(file) => void setDesign(file)}
+      <MorePhotos
+        hint="Sube la foto de un diseño (decoración, francesa, pedrería) y se aplica sobre tus uñas. Puedes tener varios y tocar el que quieras usar."
+        takeLabel="Foto del diseño"
+        onFiles={(files) => void addDesigns(files)}
+      >
+        <ThumbPicks
+          items={nails.designs.map((item, index) => ({
+            id: item.id,
+            url: item.url,
+            caption: `Diseño ${index + 1}`,
+          }))}
+          activeId={activeDesign?.id ?? null}
+          onPick={setActiveDesign}
+          onRemove={removeDesign}
+          empty={<p className="text-xs text-muted">Sin diseño: solo el color elegido.</p>}
         />
-        {nails.designUrl ? (
-          <button type="button" className="tap text-sm text-muted" onClick={clearDesign}>
-            Quitar diseño
-          </button>
+        {activeDesign ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted">Dónde poner el diseño</p>
+            <Choices options={DESIGN_SCOPES} value={nails.designScope} onChange={setDesignScope} />
+          </div>
         ) : null}
-      </section>
+      </MorePhotos>
+
+      <Button disabled={!nails.handUrl} onClick={() => void favorite()}>
+        <Heart className="size-4" />
+        Guardar en favoritos
+      </Button>
     </div>
   );
 }

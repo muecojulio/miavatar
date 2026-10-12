@@ -1,16 +1,18 @@
 import { useState } from "react";
 import { useStudio } from "@/lib/store";
+import { FAVORITE_KINDS, favoriteKindLabel, type FavoriteKind } from "@/lib/types";
 
-const filters = [
+type Filter = FavoriteKind | "all";
+
+const filters: { id: Filter; label: string }[] = [
   { id: "all", label: "Todo" },
-  { id: "prenda", label: "Prendas" },
-  { id: "cabello", label: "Cabello" },
-] as const;
+  ...FAVORITE_KINDS.map((item) => ({ id: item.id as Filter, label: item.label })),
+];
 
 export function FavoritosPanel() {
   const favorites = useStudio((state) => state.favorites);
   const remove = useStudio((state) => state.deleteFavorite);
-  const [filter, setFilter] = useState<(typeof filters)[number]["id"]>("all");
+  const [filter, setFilter] = useState<Filter>("all");
   const visible = favorites.filter((item) => filter === "all" || item.kind === filter);
   const format = new Intl.DateTimeFormat("es-MX", { dateStyle: "medium", timeStyle: "short" });
 
@@ -19,10 +21,11 @@ export function FavoritosPanel() {
       <div>
         <h2 className="font-display text-3xl leading-tight">Favoritos</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          Cada prueba guardada muestra el resultado y las fotos que usaste.
+          Cada prueba guardada muestra el avatar o la mano con el resultado, más las fotos y el
+          color que usaste.
         </p>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {filters.map((item) => (
           <button
             key={item.id}
@@ -42,21 +45,31 @@ export function FavoritosPanel() {
       {visible.length === 0 ? (
         <div className="rounded-3xl bg-surface px-5 py-8">
           <p className="font-display text-2xl">Todavía no hay pruebas guardadas.</p>
-          <p className="mt-2 text-sm text-muted">Cuando te guste un resultado, pulsa guardar en Prendas o Cabello.</p>
+          <p className="mt-2 text-sm text-muted">
+            Cuando te guste un resultado, pulsa guardar en Prendas, Cabello o Uñas.
+          </p>
         </div>
       ) : (
         <ul className="space-y-4">
           {visible.map((item) => (
             <li key={item.id} className="overflow-hidden rounded-3xl bg-surface">
-              <img src={item.previewUrl} alt="" className="w-full bg-fg object-cover" />
+              <img
+                src={item.previewUrl}
+                alt={`Resultado guardado: ${favoriteKindLabel(item.kind)}`}
+                className="w-full bg-fg object-cover"
+              />
               <div className="space-y-3 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm text-fg">{item.kind === "prenda" ? "Prendas" : "Cabello"}</p>
+                    <p className="text-sm text-fg">{favoriteKindLabel(item.kind)}</p>
                     <p className="text-sm text-muted">{item.meta}</p>
                     <p className="text-xs text-muted">{format.format(item.createdAt)}</p>
                   </div>
-                  <button type="button" className="tap min-h-11 text-sm text-muted" onClick={() => void remove(item.id)}>
+                  <button
+                    type="button"
+                    className="tap min-h-11 text-sm text-muted"
+                    onClick={() => void remove(item.id)}
+                  >
                     Quitar
                   </button>
                 </div>
@@ -64,8 +77,14 @@ export function FavoritosPanel() {
                   <div className="flex gap-2 overflow-x-auto">
                     {item.sources.map((source) => (
                       <figure key={source.url} className="shrink-0">
-                        <img src={source.url} alt={source.label} className="size-20 rounded-xl object-cover" />
-                        <figcaption className="mt-1 text-xs text-muted">{source.label}</figcaption>
+                        <img
+                          src={source.url}
+                          alt={source.label}
+                          className="size-20 rounded-xl object-cover"
+                        />
+                        <figcaption className="mt-1 max-w-20 truncate text-xs text-muted">
+                          {source.label}
+                        </figcaption>
                       </figure>
                     ))}
                   </div>
