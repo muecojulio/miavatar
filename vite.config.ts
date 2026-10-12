@@ -11,6 +11,8 @@ import { grokPwaPlugin } from "./scripts/grok-pwa-plugin.mjs";
 // @ts-expect-error JS plugin alongside the TS vite config
 import { appEnvPlugin } from "./scripts/app-env-plugin.mjs";
 import { isMigrationFile } from "./scripts/migration-plan.mjs";
+// @ts-expect-error JS module alongside the TS vite config
+import { cacheHeadersFor, headersRecord } from "./scripts/security-headers.mjs";
 
 /** The files `src/lib/db.ts` globs — same directory, same non-recursive scope. */
 function hasGlobbedMigrations(root: string): boolean {
@@ -47,6 +49,55 @@ function pgliteBootstrapPlugin(): Plugin {
         console.error("[app-builder] DB bootstrap failed:", err);
         throw err;
       }
+    },
+  };
+}
+
+/**
+ * Security headers for the Vite dev server and the build preview.
+ *
+ * `server.headers` only covers Vite's own static/index responses, not the ones
+ * TanStack Start renders in middleware — so the headers would silently never
+ * reach an SSR document and a CSP mistake would only show up in production.
+ * This wraps `writeHead` on every response instead, which makes the preview an
+ * honest rehearsal of what Vercel serves (see scripts/security-headers.mjs).
+ * Nothing is overridden: a header already set by the app wins.
+ */
+function securityHeadersPlugin(): Plugin {
+  const apply = (headers: Record<string, string>, { withCacheRules = false } = {}) => {
+    return (
+      req: { url?: string },
+      res: {
+        setHeader: (key: string, value: string) => void;
+        hasHeader: (key: string) => boolean;
+        writeHead: (...args: unknown[]) => unknown;
+      },
+      next: () => void,
+    ) => {
+      const pathname = (req.url ?? "/").split("?")[0] ?? "/";
+      // Preview serves the built output (content-hashed assets), so the cache
+      // rules are truthful there; the dev server must keep serving fresh files.
+      const all = withCacheRules
+        ? { ...cacheHeadersFor(pathname), ...headers }
+        : headers;
+      const original = res.writeHead.bind(res);
+      res.writeHead = (...args: unknown[]) => {
+        for (const [key, value] of Object.entries(all)) {
+          if (!res.hasHeader(key)) res.setHeader(key, value);
+        }
+        return original(...args);
+      };
+      next();
+    };
+  };
+  return {
+    name: "app-builder:security-headers",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use(apply(headersRecord({ dev: true })));
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(apply(headersRecord(), { withCacheRules: true }));
     },
   };
 }
@@ -154,15 +205,23 @@ export default defineConfig(({ command, isPreview }) => ({
     // `8080-xxxx.e2b.app` / `preview.grok...`), so Vite's host allowlist must
     // accept it — otherwise every preview request 403s and the app is blank.
     allowedHosts: true,
+    // Same security headers as production (see scripts/security-headers.mjs),
+    // so what the preview shows is what the deploy ships. No X-Frame-Options:
+    // the app must stay embeddable by the preview chrome.
+    headers: headersRecord({ dev: true }),
   },
   preview: {
     host: "127.0.0.1",
     port: 8081,
     strictPort: true,
+    // Strict (production) policy, so a CSP mistake shows up here and not only
+    // after deploying.
+    headers: headersRecord(),
   },
   resolve: { tsconfigPaths: true },
   plugins: [
     pgliteBootstrapPlugin(),
+    securityHeadersPlugin(),
     // Before tanstackStart so /auth/popup never falls through to the SPA.
     authPopupPlugin(),
     // Dev-only /__app-env, read by scripts/check-auth-invariant.mjs.

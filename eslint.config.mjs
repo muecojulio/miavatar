@@ -17,6 +17,9 @@ export default tseslint.config(
       "src/routeTree.gen.ts",
       // Vendored MIT implementation; license and source are documented separately.
       "src/lib/vendor/**",
+      // Generated Emscripten/MediaPipe glue shipped verbatim in public/ (minified,
+      // not maintainable source): see public/vision/NOTICE.txt.
+      "public/vision/wasm/**",
     ],
   },
   js.configs.recommended,

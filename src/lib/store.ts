@@ -1,6 +1,10 @@
 import { create } from "zustand";
+import { clearComputeCache } from "@/lib/analysis-cache";
+import { clearAllCaches } from "@/lib/cache";
+import { clearOfflineCaches } from "@/lib/offline";
 import { canvasToBlob, colorSwatchBlob, fileToCanvas } from "@/lib/images";
 import {
+  countFavorites,
   loadHair,
   loadNails,
   loadProfile,
@@ -27,6 +31,13 @@ import {
 } from "@/lib/types";
 
 export type Garment = MediaRef & { zone: Zone };
+
+/** Estado visible de una acción: alimenta botones, avisos y regiones aria-live. */
+export type ActionStatus = {
+  id: string;
+  state: "idle" | "saving" | "done" | "error";
+  message: string;
+};
 
 export type FavoriteView = {
   id: string;
@@ -77,7 +88,11 @@ type StudioState = {
   hair: Hair;
   nails: Nails;
   favorites: FavoriteView[];
+  /** Cuántas pruebas hay por tipo (se muestra en los filtros). */
+  favoriteCounts: Record<string, number>;
+  action: ActionStatus;
   init: () => Promise<void>;
+  setAction: (state: ActionStatus["state"], message: string, id?: string) => void;
   setTab: (tab: TabId) => void;
   setKind: (kind: PersonKind) => void;
   setHeight: (heightCm: number) => void;
@@ -143,6 +158,13 @@ const emptyNails = (): Nails => ({
   activeDesignId: null,
   designScope: "todas",
 });
+
+/** `crypto.randomUUID` exige contexto seguro; hay un respaldo por si no está. */
+function newId() {
+  const builder = globalThis.crypto;
+  if (builder && typeof builder.randomUUID === "function") return builder.randomUUID();
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function urlOf(blob: Blob | null) {
   return blob ? URL.createObjectURL(blob) : null;
@@ -245,9 +267,24 @@ function fromLegacy(
   }));
   if (list.length === 0 && legacy) {
     const blob = legacy;
-    list.push({ id: crypto.randomUUID(), blob, url: URL.createObjectURL(blob) });
+    list.push({ id: newId(), blob, url: URL.createObjectURL(blob) });
   }
   return list;
+}
+
+/**
+ * Traduce el estado interno de la acción al estado visual del botón.
+ * Centralizado para que todas las pestañas usen el mismo criterio.
+ */
+export function statusFor(
+  action: ActionStatus,
+  id: string,
+): "idle" | "loading" | "success" | "error" {
+  if (action.id !== id) return "idle";
+  if (action.state === "saving") return "loading";
+  if (action.state === "done") return "success";
+  if (action.state === "error") return "error";
+  return "idle";
 }
 
 export const useStudio = create<StudioState>((set, get) => ({
@@ -259,24 +296,36 @@ export const useStudio = create<StudioState>((set, get) => ({
   hair: emptyHair(),
   nails: emptyNails(),
   favorites: [],
+  favoriteCounts: {},
+  action: { id: "", state: "idle", message: "" },
+  setAction: (state, message, id = "") => set({ action: { id, state, message } }),
   init: async () => {
     if (bootStarted) return;
     bootStarted = true;
     booting = true;
+    // La memoria tarda unas décimas en cargar y el usuario puede tocar la
+    // interfaz antes. Lo que elige en ese instante es más reciente que lo
+    // guardado: se conserva en lugar de sobrescribirse cuando llega la carga.
+    const touched = new Set<"profile" | "hair" | "nails" | "favorites">();
+    const unsubscribe = useStudio.subscribe((state, previous) => {
+      if (!booting) return;
+      if (state.profile !== previous.profile) touched.add("profile");
+      if (state.hair !== previous.hair) touched.add("hair");
+      if (state.nails !== previous.nails) touched.add("nails");
+      if (state.favorites !== previous.favorites) touched.add("favorites");
+    });
     try {
-      const [profile, hair, nails, favorites] = await Promise.all([
+      const [profile, hair, nails, favorites, counts] = await Promise.all([
         loadProfile(),
         loadHair(),
         loadNails(),
         queryFavorites("all"),
+        countFavorites().catch(() => ({ total: 0, byKind: {} as Record<string, number> })),
       ]);
       const styles = hair ? fromLegacy(hair.styles, hair.style) : [];
       const designs = nails ? fromLegacy(nails.designs, nails.design) : [];
-      set({
-        ready: true,
-        memoryOk: true,
-        profile: profile
-          ? {
+      const loadedProfile: Profile = profile
+        ? {
               kind: profile.kind,
               heightCm: profile.heightCm,
               weightKg: profile.weightKg,
@@ -292,9 +341,10 @@ export const useStudio = create<StudioState>((set, get) => ({
                 url: URL.createObjectURL(item.blob),
               })),
             }
-          : emptyProfile(),
-        hair: hair
-          ? {
+        : emptyProfile();
+
+      const loadedHair: Hair = hair
+        ? {
               dye: hair.dye,
               intensity: hair.intensity,
               selfieBlob: hair.selfie,
@@ -304,9 +354,10 @@ export const useStudio = create<StudioState>((set, get) => ({
                 ? hair.activeStyleId
                 : (styles[0]?.id ?? null),
             }
-          : emptyHair(),
-        nails: nails
-          ? {
+        : emptyHair();
+
+      const loadedNails: Nails = nails
+        ? {
               color: nails.color,
               gloss: nails.gloss,
               handBlob: nails.hand,
@@ -317,9 +368,38 @@ export const useStudio = create<StudioState>((set, get) => ({
                 : (designs[0]?.id ?? null),
               designScope: nails.designScope ?? "todas",
             }
-          : emptyNails(),
-        favorites: favorites.map(viewFavorite),
+        : emptyNails();
+
+      set({
+        ready: true,
+        memoryOk: true,
+        ...(touched.has("profile") ? {} : { profile: loadedProfile }),
+        ...(touched.has("hair") ? {} : { hair: loadedHair }),
+        ...(touched.has("nails") ? {} : { nails: loadedNails }),
+        ...(touched.has("favorites")
+          ? {}
+          : {
+              favorites: favorites.map(viewFavorite),
+              favoriteCounts: { all: counts.total, ...counts.byKind },
+            }),
       });
+
+      if (touched.has("favorites") && get().memoryOk) {
+        // Guardar y quitar escriben antes de tocar el estado, así que volver a
+        // consultar la base es exacto y no pierde lo hecho durante el arranque.
+        const [fresh, freshCounts] = await Promise.all([
+          queryFavorites("all"),
+          countFavorites().catch(() => ({ total: 0, byKind: {} as Record<string, number> })),
+        ]);
+        get().favorites.forEach((item) => {
+          revoke(item.previewUrl);
+          item.sources.forEach((source) => revoke(source.url));
+        });
+        set({
+          favorites: fresh.map(viewFavorite),
+          favoriteCounts: { all: freshCounts.total, ...freshCounts.byKind },
+        });
+      }
     } catch {
       set({
         ready: true,
@@ -327,7 +407,13 @@ export const useStudio = create<StudioState>((set, get) => ({
         note: "Este navegador no guardó la memoria local. Puedes probar igual, pero se pierde al cerrar.",
       });
     } finally {
+      unsubscribe();
       booting = false;
+      // Lo elegido durante el arranque se guarda ahora (antes no podía: la
+      // carga en curso habría escrito encima).
+      if (touched.has("profile")) queueProfile();
+      if (touched.has("hair")) queueHair();
+      if (touched.has("nails")) queueNails();
     }
   },
   setTab: (tab) => set({ tab, note: "" }),
@@ -380,7 +466,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     for (const file of taken) {
       const image = await rememberFile(file, 800);
       added.push({
-        id: crypto.randomUUID(),
+        id: newId(),
         zone: guessZone(image.width, image.height),
         url: image.url,
         blob: image.blob,
@@ -432,7 +518,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     const added: MediaRef[] = [];
     for (const file of files.slice(0, room)) {
       const image = await rememberFile(file, 800);
-      added.push({ id: crypto.randomUUID(), url: image.url, blob: image.blob });
+      added.push({ id: newId(), url: image.url, blob: image.blob });
     }
     set({
       hair: {
@@ -499,7 +585,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     const added: MediaRef[] = [];
     for (const file of files.slice(0, room)) {
       const image = await rememberFile(file, 640);
-      added.push({ id: crypto.randomUUID(), url: image.url, blob: image.blob });
+      added.push({ id: newId(), url: image.url, blob: image.blob });
     }
     set({
       nails: {
@@ -539,28 +625,58 @@ export const useStudio = create<StudioState>((set, get) => ({
   },
   saveFavorite: async (input) => {
     const record: FavoriteRecord = {
-      id: crypto.randomUUID(),
+      id: newId(),
       kind: input.kind,
       createdAt: Date.now(),
       meta: input.meta,
       preview: input.preview,
       sources: input.sources,
     };
-    if (get().memoryOk) await putFavorite(record);
-    set({
-      favorites: [viewFavorite(record), ...get().favorites],
-      note: "Guardado en favoritos.",
-    });
+    set({ action: { id: input.kind, state: "saving", message: "Guardando la prueba…" } });
+    try {
+      if (get().memoryOk) await putFavorite(record);
+      const counts = get().favoriteCounts;
+      set({
+        favorites: [viewFavorite(record), ...get().favorites],
+        favoriteCounts: {
+          ...counts,
+          all: (counts.all ?? 0) + 1,
+          [input.kind]: (counts[input.kind] ?? 0) + 1,
+        },
+        note: "Guardado en favoritos.",
+        action: { id: input.kind, state: "done", message: "Guardado en favoritos." },
+      });
+    } catch {
+      set({
+        memoryOk: false,
+        note: "No se pudo guardar en este dispositivo.",
+        action: { id: input.kind, state: "error", message: "No se pudo guardar." },
+      });
+    }
   },
   buildSwatch: (hex) => colorSwatchBlob(hex),
   deleteFavorite: async (id) => {
     const current = get().favorites.find((item) => item.id === id);
-    if (current) {
-      revoke(current.previewUrl);
-      current.sources.forEach((source) => revoke(source.url));
+    set({ action: { id, state: "saving", message: "Quitando la prueba…" } });
+    try {
+      if (get().memoryOk) await removeFavorite(id);
+      const counts = get().favoriteCounts;
+      const nextCounts: Record<string, number> = {
+        ...counts,
+        all: Math.max(0, (counts.all ?? 0) - 1),
+      };
+      if (current) nextCounts[current.kind] = Math.max(0, (counts[current.kind] ?? 0) - 1);
+      set({
+        favorites: get().favorites.filter((item) => item.id !== id),
+        favoriteCounts: nextCounts,
+        action: { id, state: "done", message: "Prueba quitada." },
+      });
+    } finally {
+      if (current) {
+        revoke(current.previewUrl);
+        current.sources.forEach((source) => revoke(source.url));
+      }
     }
-    if (get().memoryOk) await removeFavorite(id);
-    set({ favorites: get().favorites.filter((item) => item.id !== id) });
   },
   wipe: async () => {
     const { profile, hair, nails, favorites } = get();
@@ -575,11 +691,18 @@ export const useStudio = create<StudioState>((set, get) => ({
       item.sources.forEach((source) => revoke(source.url));
     });
     if (get().memoryOk) await wipeAll();
+    // Nada derivado sobrevive al borrado: caché de cómputo, de datos externos y
+    // del service worker.
+    clearComputeCache();
+    clearAllCaches();
+    await clearOfflineCaches();
     set({
       profile: emptyProfile(),
       hair: emptyHair(),
       nails: emptyNails(),
       favorites: [],
+      favoriteCounts: {},
+      action: { id: "", state: "done", message: "Se borró todo lo guardado en este teléfono." },
       tab: "prendas",
       note: "Se borró todo lo guardado en este teléfono.",
     });

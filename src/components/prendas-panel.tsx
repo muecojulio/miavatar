@@ -1,17 +1,28 @@
 import { useEffect, useRef, useState } from "react";
-import { Heart } from "lucide-react";
+import { Heart, Ruler, Shirt, Trash2, Weight } from "lucide-react";
 import { MorePhotos } from "@/components/more-photos";
-import { Button, Note, PhotoButtons, SliderField, Swatches, Toggle } from "@/components/ui";
-import { drawBody, STAGE_H, STAGE_W } from "@/lib/draw-body";
+import { StatPills } from "@/components/stats";
+import { EmptyStage, Stage } from "@/components/stage";
+import { SwipeRow } from "@/components/swipe-row";
+import {
+  Button,
+  Choices,
+  Note,
+  PhotoButtons,
+  SliderField,
+  Swatches,
+  Toggle,
+} from "@/components/ui";
 import { cropToBounds, opaqueRatio, removeBackground } from "@/lib/cutout";
+import { drawBody, STAGE_H, STAGE_W } from "@/lib/draw-body";
 import { canvasToBlob, loadImage } from "@/lib/images";
-import { useStudio } from "@/lib/store";
+import { statusFor, useStudio } from "@/lib/store";
 import { EYES, KINDS, ZONES, eyeHex, kindLabel, ranges } from "@/lib/types";
 import { usePersonAnalysis } from "@/lib/use-analysis";
 
 export function PrendasPanel() {
   const profile = useStudio((state) => state.profile);
-  const note = useStudio((state) => state.note);
+  const action = useStudio((state) => state.action);
   const setKind = useStudio((state) => state.setKind);
   const setHeight = useStudio((state) => state.setHeight);
   const setWeight = useStudio((state) => state.setWeight);
@@ -26,6 +37,7 @@ export function PrendasPanel() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cuts = useRef(new Map<string, HTMLCanvasElement>());
   const [cutVersion, setCutVersion] = useState(0);
+  const [burst, setBurst] = useState(0);
   const { analysis, pending, error } = usePersonAnalysis(profile.faceUrl);
   const span = profile.kind ? ranges(profile.kind) : null;
   const garmentKey = profile.garments.map((item) => item.id).join("|");
@@ -81,6 +93,7 @@ export function PrendasPanel() {
   async function favorite() {
     const canvas = canvasRef.current;
     if (!canvas || !profile.kind) return;
+    setBurst((value) => value + 1);
     const preview = await canvasToBlob(canvas, "image/jpeg", 0.84);
     await saveFavorite({
       kind: "prenda",
@@ -97,57 +110,72 @@ export function PrendasPanel() {
   }
 
   const faceFound = Boolean(analysis?.landmarks);
+  const status = statusFor(action, "prenda");
 
   return (
-    <div className="panel space-y-5">
-      <div className="grid grid-cols-4 gap-2">
-        {KINDS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            aria-pressed={profile.kind === item.id}
-            onClick={() => setKind(item.id)}
-            className={
-              profile.kind === item.id
-                ? "tap min-h-11 rounded-full bg-accent text-sm font-medium text-bg"
-                : "tap min-h-11 rounded-full bg-surface text-sm text-fg"
-            }
-          >
-            {item.label}
-          </button>
-        ))}
+    <div className="space-y-6">
+      <header className="stagger" style={{ ["--i" as string]: 0 }}>
+        <h2 className="font-display text-3xl leading-tight">Probador de prendas</h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted">
+          Elige la figura, ajusta medidas y coloca tu cara. Después sube cada prenda y colócala en
+          la parte correcta.
+        </p>
+      </header>
+
+      <div className="stagger" style={{ ["--i" as string]: 1 }}>
+        <Choices
+          label="¿Quién se prueba la ropa?"
+          options={KINDS.map((item) => ({ id: item.id, label: item.label }))}
+          value={profile.kind}
+          onChange={setKind}
+        />
       </div>
 
       {!profile.kind ? (
-        <div className="flex min-h-80 flex-col justify-end rounded-3xl bg-fg p-6 text-bg">
-          <p className="font-display text-3xl leading-tight">Elige quién se prueba la ropa.</p>
-          <p className="mt-3 max-w-sm text-sm leading-relaxed opacity-80">
-            Hombre, mujer, niño o niña. Después ajustas estatura, peso y color de ojos, y colocas tu
-            cara.
-          </p>
-        </div>
+        <EmptyStage
+          title="Elige quién se prueba la ropa."
+          hint="Hombre, mujer, niño o niña. Después ajustas estatura, peso y color de ojos, y colocas tu cara."
+        />
       ) : (
-        <div className="overflow-hidden rounded-3xl bg-fg">
-          <canvas
-            ref={canvasRef}
-            className="w-full"
-            aria-label="Avatar de cuerpo completo con la ropa de prueba"
-          />
+        <div className="stagger" style={{ ["--i" as string]: 2 }}>
+          <Stage
+            ariaLabel="Avatar de cuerpo completo con la ropa de prueba"
+            busy={pending}
+            burstKey={burst}
+          >
+            <canvas ref={canvasRef} className="block w-full" />
+          </Stage>
         </div>
       )}
 
-      {pending ? <p className="text-sm text-muted">Ajustando tu cara al avatar…</p> : null}
-      {error ? <p className="text-sm text-accent">{error}</p> : null}
+      {span ? (
+        <StatPills
+          label="Medidas actuales"
+          items={[
+            { id: "kind", label: "Figura", value: kindLabel(profile.kind), icon: Shirt },
+            { id: "height", label: "Altura", value: `${profile.heightCm} cm`, icon: Ruler },
+            { id: "weight", label: "Peso", value: `${profile.weightKg} kg`, icon: Weight },
+            {
+              id: "garments",
+              label: "Prendas",
+              value: String(profile.garments.length),
+              icon: Heart,
+            },
+          ]}
+        />
+      ) : null}
+
+      {error ? <Note tone="error">{error}</Note> : null}
       {analysis && !pending && !faceFound ? (
-        <p className="text-sm text-muted">
+        <Note>
           No encontré la cara con claridad, así que usé la foto completa y el color de ojos elegido
           no se aplicó.
-        </p>
+        </Note>
       ) : null}
-      <Note>{note}</Note>
 
       {span ? (
-        <div className="space-y-4">
+        <section className="card space-y-4 p-5 stagger" style={{ ["--i" as string]: 3 }}>
+          <h3 className="font-display text-xl">Medidas y acabado</h3>
           <SliderField
             label="Estatura"
             min={span.hMin}
@@ -166,22 +194,34 @@ export function PrendasPanel() {
           />
           <div>
             <p className="mb-2 text-sm text-muted">Color de ojos</p>
-            <Swatches options={[...EYES]} value={profile.eye} onChange={setEye} />
+            <Swatches
+              label="Color de ojos"
+              options={[...EYES]}
+              value={profile.eye}
+              onChange={setEye}
+              fadeColor="var(--color-surface)"
+            />
           </div>
-          <Toggle label="Fondo de estudio" checked={profile.studio} onCheckedChange={setStudio} />
+          <Toggle
+            label="Fondo de estudio"
+            hint="Un fondo claro y limpio detrás de la figura"
+            checked={profile.studio}
+            onCheckedChange={setStudio}
+          />
           <Toggle
             label="Mostrar medidas"
+            hint="Guías de altura y proporciones sobre el avatar"
             checked={profile.measures}
             onCheckedChange={setMeasures}
           />
-        </div>
+        </section>
       ) : null}
 
-      <section className="space-y-3">
-        <h2 className="font-display text-2xl">Tu cara</h2>
+      <section className="space-y-3 stagger" style={{ ["--i" as string]: 4 }}>
+        <h3 className="font-display text-2xl">Tu cara</h3>
         <p className="text-sm leading-relaxed text-muted">
-          La foto no sale de este teléfono. La primera vez se prepara un modelo de visión guardado
-          en la app. Con esta foto se pega tu rostro al avatar.
+          La foto no sale de este teléfono. Con ella se pega tu rostro al avatar y se toman los
+          colores de piel y pelo.
         </p>
         <PhotoButtons
           capture="user"
@@ -191,53 +231,72 @@ export function PrendasPanel() {
         />
       </section>
 
-      <MorePhotos
-        hint="Fotografía cada prenda sobre un fondo liso. Las fotos que elijas aquí se suman una tras otra al avatar; tu cara y la figura no se cambian."
-        takeLabel="Foto de prenda"
-        onFiles={(files) => void addGarments(files)}
-      >
-        <ul className="space-y-3">
-          {profile.garments.map((garment, index) => (
-            <li key={garment.id} className="flex items-center gap-3 rounded-2xl bg-bg/60 p-2">
-              <img src={garment.url} alt="" className="size-16 rounded-xl object-cover" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm">Prenda {index + 1}</p>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {ZONES.map((zone) => (
-                    <button
-                      key={zone.id}
-                      type="button"
-                      aria-pressed={garment.zone === zone.id}
-                      onClick={() => setGarmentZone(garment.id, zone.id)}
-                      className={
-                        garment.zone === zone.id
-                          ? "tap min-h-9 rounded-full bg-accent px-3 text-xs text-bg"
-                          : "tap min-h-9 rounded-full px-3 text-xs text-muted outline outline-1 outline-fg/15"
-                      }
-                    >
-                      {zone.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <button
-                type="button"
-                className="tap min-h-11 px-2 text-sm text-muted"
-                onClick={() => removeGarment(garment.id)}
-              >
-                Quitar
-              </button>
-            </li>
-          ))}
-        </ul>
-      </MorePhotos>
+      <div className="stagger" style={{ ["--i" as string]: 5 }}>
+        <MorePhotos
+          hint="Fotografía cada prenda sobre un fondo liso. Las fotos que elijas aquí se suman una tras otra al avatar; tu cara y la figura no se cambian. Desliza una prenda hacia la izquierda para revelar acciones, o usa el botón de la esquina."
+          takeLabel="Foto de prenda"
+          onFiles={(files) => void addGarments(files)}
+        >
+          {profile.garments.length === 0 ? (
+            <p className="rounded-2xl border border-dashed border-fg/15 px-3 py-4 text-xs text-muted">
+              Sin prendas todavía. Sube una o varias fotos para probarlas.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {profile.garments.map((garment, index) => (
+                <li key={garment.id}>
+                  <SwipeRow
+                    label={`la prenda ${index + 1}`}
+                    className="bg-bg/50"
+                    surfaceClassName="bg-bg/60"
+                    actions={[
+                      {
+                        id: "remove",
+                        label: "Quitar",
+                        icon: Trash2,
+                        tone: "danger",
+                        onAction: () => removeGarment(garment.id),
+                      },
+                    ]}
+                  >
+                    <div className="flex items-center gap-3 p-2.5 pr-14">
+                      <img
+                        src={garment.url}
+                        alt={`Prenda ${index + 1}`}
+                        className="size-16 rounded-2xl object-cover outline outline-1 outline-fg/10"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">Prenda {index + 1}</p>
+                        <p className="text-xs text-muted">¿Dónde va esta prenda?</p>
+                        <div className="mt-2">
+                          <Choices
+                            label={`Zona de la prenda ${index + 1}`}
+                            options={ZONES}
+                            value={garment.zone}
+                            onChange={(zone) => setGarmentZone(garment.id, zone)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </SwipeRow>
+                </li>
+              ))}
+            </ul>
+          )}
+        </MorePhotos>
+      </div>
 
       <Button
+        className="w-full"
+        status={status}
+        statusLabel={action.message}
         disabled={!profile.kind || (!profile.faceUrl && profile.garments.length === 0)}
+        icon={Heart}
         onClick={() => void favorite()}
       >
-        <Heart className="size-4" />
-        Guardar en favoritos
+        {status === "success" ? "Guardado" : "Guardar en favoritos"}
       </Button>
     </div>
   );

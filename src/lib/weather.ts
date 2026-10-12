@@ -1,3 +1,5 @@
+import { createTtlCache, normalizeText } from "./cache.ts";
+
 export type GeoPlace = {
   id: number;
   name: string;
@@ -22,6 +24,17 @@ export type WeatherSummary = {
 const GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
 const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
 
+/**
+ * Caché: el geocodificador de una ciudad casi no cambia (24 h) y el pronóstico
+ * se refresca cada 15 min. Si la red falla, se devuelve el último dato guardado
+ * en lugar de dejar la pantalla vacía.
+ */
+const placesCache = createTtlCache<GeoPlace[]>("openmeteo:places", 24 * 60 * 60 * 1000);
+const forecastCache = createTtlCache<WeatherSummary>("openmeteo:forecast", 15 * 60 * 1000);
+
+/** Un pronóstico caducado sigue siendo mejor que ninguno cuando no hay red. */
+export type WeatherResult = { summary: WeatherSummary; stale: boolean };
+
 async function readJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, {
     headers: { Accept: "application/json" },
@@ -43,6 +56,12 @@ function firstNumber(value: unknown): number | null {
 export async function searchPlaces(query: string, signal?: AbortSignal): Promise<GeoPlace[]> {
   const name = query.trim();
   if (name.length < 2) return [];
+
+  // La misma búsqueda no vuelve a salir a la red dentro de la sesión ni tras recargar.
+  return placesCache.load(normalizeText(name), () => fetchPlaces(name, signal), signal);
+}
+
+async function fetchPlaces(name: string, signal?: AbortSignal): Promise<GeoPlace[]> {
 
   const url = new URL(GEOCODING_URL);
   url.search = new URLSearchParams({
@@ -85,6 +104,23 @@ export async function searchPlaces(query: string, signal?: AbortSignal): Promise
 
 /** Retrieves today's current conditions and daily outlook for a chosen place. */
 export async function getWeatherForPlace(
+  place: Pick<GeoPlace, "latitude" | "longitude" | "timezone">,
+  signal?: AbortSignal,
+): Promise<WeatherResult> {
+  const key = `${place.latitude.toFixed(3)},${place.longitude.toFixed(3)}`;
+  const fresh = forecastCache.peek(key);
+  if (fresh) return { summary: fresh, stale: false };
+  try {
+    const summary = await forecastCache.load(key, () => fetchForecast(place, signal), signal);
+    return { summary, stale: false };
+  } catch (error) {
+    const stale = forecastCache.peekStale(key);
+    if (stale) return { summary: stale, stale: true };
+    throw error;
+  }
+}
+
+async function fetchForecast(
   place: Pick<GeoPlace, "latitude" | "longitude" | "timezone">,
   signal?: AbortSignal,
 ): Promise<WeatherSummary> {

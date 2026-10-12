@@ -1,3 +1,5 @@
+import { createTtlCache } from "./cache.ts";
+
 export type ColorMode = "complement" | "analogic" | "triad";
 
 export type ColorSuggestion = {
@@ -16,8 +18,13 @@ type ColorApiColor = {
 };
 
 const API_BASE = "https://www.thecolorapi.com";
-const cache = new Map<string, ColorAdvice>();
 const HEX_PATTERN = /^#[\da-f]{6}$/i;
+
+/**
+ * Las armonías de un mismo color no cambian: se guardan un mes (memoria y
+ * `localStorage`) para no repetir la consulta al cambiar de modo y volver.
+ */
+const adviceCache = createTtlCache<ColorAdvice>("thecolorapi:advice", 30 * 24 * 60 * 60 * 1000);
 
 async function getJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, {
@@ -48,7 +55,7 @@ export async function getColorAdvice(
 
   const normalizedHex = hex.slice(1).toUpperCase();
   const cacheKey = `${normalizedHex}:${mode}`;
-  const cached = cache.get(cacheKey);
+  const cached = adviceCache.peek(cacheKey);
   if (cached) return cached;
 
   const colorUrl = new URL("/id", API_BASE);
@@ -74,10 +81,6 @@ export async function getColorAdvice(
   }
 
   const result = { baseName: baseColor.name, colors };
-  cache.set(cacheKey, result);
-  if (cache.size > 24) {
-    const oldest = cache.keys().next().value;
-    if (oldest) cache.delete(oldest);
-  }
+  adviceCache.put(cacheKey, result);
   return result;
 }
