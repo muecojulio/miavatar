@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { chromium } from "playwright";
 import { checkedOutputPath, checkedUrl } from "./browser-guard.mjs";
 import { computeBrandWarnings } from "./brand-check.mjs";
@@ -20,6 +20,9 @@ import {
   parseSmokeArgs,
 } from "./browser-smoke-verdict.mjs";
 
+import { projectRoot } from "./with-app-env.mjs";
+
+const workspaceRoot = projectRoot();
 const args = parseSmokeArgs(process.argv.slice(2), process.env);
 if (args.error) {
   console.error(JSON.stringify({ ok: false, error: args.error }, null, 2));
@@ -27,10 +30,13 @@ if (args.error) {
 }
 
 const url = checkedUrl(args.url);
-const outPng = checkedOutputPath(args.outPng, ["/workspace"]);
+const outputPath = args.outPng === "/workspace/screenshots/app-builder-preview.png"
+  ? join(workspaceRoot, "screenshots/app-builder-preview.png")
+  : args.outPng;
+const outPng = checkedOutputPath(outputPath, [workspaceRoot]);
 const derived = derivedPaths(outPng);
-const mobilePng = checkedOutputPath(derived.mobilePng, ["/workspace"]);
-const outJson = checkedOutputPath(derived.verdictJson, ["/workspace"], "verdict JSON");
+const mobilePng = checkedOutputPath(derived.mobilePng, [workspaceRoot]);
+const outJson = checkedOutputPath(derived.verdictJson, [workspaceRoot], "verdict JSON");
 
 const MAX_BASELINE_BYTES = 1024 * 1024;
 const baselineRequested = Boolean(args.baseline);
@@ -38,7 +44,7 @@ let baselinePath = null;
 let baselineResolveError = null;
 if (baselineRequested) {
   try {
-    baselinePath = checkedOutputPath(realpathSync(args.baseline), ["/workspace"], "baseline");
+    baselinePath = checkedOutputPath(realpathSync(args.baseline), [workspaceRoot], "baseline");
   } catch (err) {
     baselineResolveError = err?.code ?? "unresolvable path";
   }
@@ -92,17 +98,21 @@ let browser = null;
 try {
   browser = await chromium.launch({
     headless: true,
+    executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
 
   const viewports = {};
   for (const vp of VIEWPORTS) {
-    const errors = { consoleErrors: [], pageErrors: [] };
+    const errors = { consoleErrors: [], pageErrors: [], failedRequests: [] };
     const page = await browser.newPage({
       viewport: { width: vp.width, height: vp.height },
     });
     page.on("console", (msg) => {
       if (msg.type() === "error") errors.consoleErrors.push(msg.text());
+    });
+    page.on("requestfailed", (request) => {
+      errors.failedRequests.push({ url: request.url(), error: request.failure()?.errorText });
     });
     page.on("pageerror", (err) => errors.pageErrors.push(String(err?.message || err)));
     // `domcontentloaded`, not `networkidle`: Vite keeps an HMR websocket open, so
@@ -136,11 +146,12 @@ try {
       horizontalOverflow,
       consoleErrors: errors.consoleErrors,
       pageErrors: errors.pageErrors,
+      failedRequests: errors.failedRequests,
       screenshot: vp.screenshot,
     };
   }
 
-  const brandWarnings = computeBrandWarnings({ hasCanvas: viewports.desktop.hasCanvas });
+  const brandWarnings = computeBrandWarnings({ hasCanvas: viewports.desktop.hasCanvas, workspaceRoot });
   // Only a dev server answers /__app-env, so smoking the built output reads as
   // indeterminate — report a divergence, never the absence of an observation.
   const authWarnings = authInvariantWarnings(

@@ -88,3 +88,35 @@ Los avisos de software de terceros (Color Thief, quantize.js, Protovis, tipograf
 `@fontsource` y `qrcode.react`) están en [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 Producción pensada para Node.js 24.x.
+
+
+## Despliegue en Vercel
+
+- **Node.js:** 24.x (declarado en `package.json`).
+- **Directorio raíz:** la raíz de este repositorio.
+- **Instalación:** `npm ci --omit=dev --no-audit --no-fund`, definida en `vercel.json`.
+  Usa las versiones de `package-lock.json` sin resolver otras nuevas.
+- **Build:** `npm run build`, definido en `vercel.json`.
+- **Salida:** Nitro usa el preset `vercel` y genera `.vercel/output` con archivos
+  estáticos y una función Node.js 24. No configurar `dist` como salida de una SPA
+  ni añadir una reescritura global a `index.html`.
+- **Variables:** esta app local no necesita claves, base de datos ni autenticación.
+  `.grok/app-env.json` está versionado con `VITE_AUTH_ENABLED=false`; no contiene
+  secretos. Si Vercel tiene una variable homónima, prevalece: mantenerla en `false`
+  o eliminar esa sobreescritura. No se necesita `DATABASE_URL`.
+
+Para validar antes de publicar, con dependencias de desarrollo instaladas:
+
+```bash
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+La prueba visual está en `scripts/browser-smoke.mjs` y requiere Chromium de
+Playwright (o `BROWSER_EXECUTABLE_PATH` apuntando a un Chromium compatible).
+Guarda capturas y resultados en `screenshots/`, sin incorporarlos a Git.
+Consultar [docs/VALIDACION-VERCEL.md](./docs/VALIDACION-VERCEL.md) para el alcance
+y los límites de la revisión.
