@@ -1,6 +1,17 @@
-import type { Point } from "@/lib/vision";
+import { opaqueBounds } from "./cutout.ts";
+import type { Point } from "./vision.ts";
 
-function dyeLayer(width: number, height: number, mask: CanvasImageSource, dye: string) {
+function luminance(color: string) {
+  const hex = color.replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return 0.4;
+  const n = Number.parseInt(hex, 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function layerOf(width: number, height: number, mask: CanvasImageSource, dye: string) {
   const layer = document.createElement("canvas");
   layer.width = width;
   layer.height = height;
@@ -13,84 +24,132 @@ function dyeLayer(width: number, height: number, mask: CanvasImageSource, dye: s
   return layer;
 }
 
-function boundsOf(source: HTMLCanvasElement) {
-  const ctx = source.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return { x: 0, y: 0, w: source.width, h: source.height };
-  const { data, width, height } = ctx.getImageData(0, 0, source.width, source.height);
-  let minX = width;
-  let minY = height;
-  let maxX = 0;
-  let maxY = 0;
-  let found = false;
-  for (let y = 0; y < height; y += 2) {
-    for (let x = 0; x < width; x += 2) {
-      if (data[(y * width + x) * 4 + 3] > 20) {
-        found = true;
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
-    }
+/**
+ * Dye a photo of hair (or a reference hairstyle) while keeping the original
+ * light and shadow, so the result reads as tinted hair and not as a flat blob.
+ * `hue` moves the colour, a light `color` pass adds saturation.
+ */
+function dyePhoto(
+  ctx: CanvasRenderingContext2D,
+  mask: CanvasImageSource & { width: number; height: number },
+  dye: string,
+  intensity: number,
+) {
+  if (!dye || intensity <= 0.02) return;
+  const layer = layerOf(mask.width, mask.height, mask, dye);
+  const lum = luminance(dye);
+  ctx.save();
+  ctx.globalCompositeOperation = "hue";
+  ctx.globalAlpha = Math.min(1, intensity);
+  ctx.drawImage(layer, 0, 0);
+  // Saturation of the chosen dye, keeping the highlights of the photo.
+  ctx.globalCompositeOperation = "color";
+  ctx.globalAlpha = Math.min(1, intensity * 1.15);
+  ctx.drawImage(layer, 0, 0);
+  if (lum < 0.5) {
+    // Dark dyes (negro, caoba, vino) also darken the hair.
+    ctx.globalCompositeOperation = "multiply";
+    ctx.globalAlpha = Math.min(0.85, (0.55 - lum) * 1.6 * intensity);
+    ctx.drawImage(layer, 0, 0);
+  } else {
+    // Light dyes (rubio, platino) lift dark hair instead.
+    ctx.globalCompositeOperation = "lighten";
+    ctx.globalAlpha = Math.min(0.9, (lum - 0.5) * 2.4 * intensity);
+    ctx.drawImage(layer, 0, 0);
+    if (lum > 0.8) ctx.drawImage(layer, 0, 0);
   }
-  if (!found) return { x: 0, y: 0, w: width, h: height };
-  return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+  ctx.restore();
+}
+
+/** Bottom edge of a reference hairstyle fades out so it doesn't cut the face. */
+function fadeBottom(canvas: HTMLCanvasElement, fade = 0.22) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+  const gradient = ctx.createLinearGradient(0, canvas.height * (1 - fade - 0.12), 0, canvas.height);
+  gradient.addColorStop(0, "rgba(0,0,0,1)");
+  gradient.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+  return canvas;
 }
 
 export function drawHair(
   ctx: CanvasRenderingContext2D,
-  photo: HTMLCanvasElement,
-  hairMask: HTMLCanvasElement | null,
-  style: HTMLCanvasElement | null,
-  landmarks: Point[] | null,
-  dye: string,
-  intensity: number,
+  input: {
+    photo: HTMLCanvasElement;
+    hairMask: HTMLCanvasElement | null;
+    style: HTMLCanvasElement | null;
+    landmarks: Point[] | null;
+    dye: string;
+    intensity: number;
+    /** Face and skin of the original photo, painted over the reference hair. */
+    skinLayer?: HTMLCanvasElement | null;
+  },
 ) {
+  const { photo, hairMask, style, landmarks, dye, intensity, skinLayer } = input;
   const w = photo.width;
   const h = photo.height;
   ctx.clearRect(0, 0, w, h);
   ctx.drawImage(photo, 0, 0);
-  if (dye && hairMask && intensity > 0.02) {
-    const layer = dyeLayer(w, h, hairMask, dye);
-    ctx.save();
-    ctx.globalCompositeOperation = "color";
-    ctx.globalAlpha = intensity;
-    ctx.drawImage(layer, 0, 0);
-    ctx.restore();
+
+  if (hairMask && dye && intensity > 0.02) {
+    dyePhoto(ctx, hairMask, dye, intensity);
   }
+
   if (!style) return;
-  const box = boundsOf(style);
-  let dx = w * 0.18;
-  let dy = h * 0.02;
+  const box = opaqueBounds(style);
+  // A reference hairstyle is drawn over the head: width from the face, height
+  // from the photo's own proportions, never taller than the photo itself.
   let dw = w * 0.64;
   let dh = box.h * (dw / box.w);
+  let dx = (w - dw) / 2;
+  let dy = h * 0.02;
   if (landmarks && landmarks.length > 454) {
     const left = landmarks[234];
     const right = landmarks[454];
     const top = landmarks[10];
+    const chin = landmarks[152];
     if (left && right && top) {
       const faceW = Math.abs(right.x - left.x) * w;
       const faceCx = ((left.x + right.x) / 2) * w;
-      const earY = ((left.y + right.y) / 2) * h;
-      dw = faceW * 2.5;
+      const faceLen = chin ? Math.max(faceW * 0.9, Math.abs(chin.y - top.y) * h) : faceW * 1.4;
+      // Hair sits on the skull: a little above the hairline, about 2.3 faces
+      // wide, and never longer than the photo or the shoulders allow.
+      const headTop = top.y * h - faceLen * 0.18;
+      dw = faceW * 2.3;
       dh = box.h * (dw / box.w);
+      const maxHeight = Math.min(h - headTop, faceLen * 2.7);
+      if (dh > maxHeight) {
+        dh = maxHeight;
+        dw = box.w * (dh / box.h);
+      }
       dx = faceCx - dw / 2;
-      dy = Math.min(top.y * h, earY) - dh * 0.86;
+      dy = headTop;
     }
   }
-  const tinted = document.createElement("canvas");
-  tinted.width = style.width;
-  tinted.height = style.height;
-  const tctx = tinted.getContext("2d");
-  if (!tctx) return;
-  tctx.drawImage(style, 0, 0);
-  if (dye && intensity > 0.02) {
-    const layer = dyeLayer(style.width, style.height, style, dye);
-    tctx.save();
-    tctx.globalCompositeOperation = "color";
-    tctx.globalAlpha = Math.min(1, intensity + 0.15);
-    tctx.drawImage(layer, 0, 0);
-    tctx.restore();
+
+  const wig = document.createElement("canvas");
+  wig.width = Math.max(1, Math.round(box.w));
+  wig.height = Math.max(1, Math.round(box.h));
+  const wctx = wig.getContext("2d");
+  if (!wctx) return;
+  wctx.drawImage(style, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+  if (dye && intensity > 0.02) dyePhoto(wctx, wig, dye, Math.min(1, intensity + 0.1));
+  fadeBottom(wig, 0.3);
+
+  ctx.save();
+  ctx.drawImage(wig, dx, dy, dw, dh);
+  ctx.restore();
+
+  // The face of the photo goes on top: the reference hair frames it instead of
+  // covering it, and the wig can still fall over the shoulders.
+  if (skinLayer) {
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(skinLayer, 0, 0, w, h);
+    ctx.restore();
   }
-  ctx.drawImage(tinted, box.x, box.y, box.w, box.h, dx, dy, dw, dh);
 }

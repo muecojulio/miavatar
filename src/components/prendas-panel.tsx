@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Heart } from "lucide-react";
+import { MorePhotos } from "@/components/more-photos";
+import { Button, Note, PhotoButtons, SliderField, Swatches, Toggle } from "@/components/ui";
 import { drawBody, STAGE_H, STAGE_W } from "@/lib/draw-body";
+import { cropToBounds, opaqueRatio, removeBackground } from "@/lib/cutout";
 import { canvasToBlob, loadImage } from "@/lib/images";
-import { opaqueRatio, removeBackground } from "@/lib/cutout";
 import { useStudio } from "@/lib/store";
 import { EYES, KINDS, ZONES, eyeHex, kindLabel, ranges } from "@/lib/types";
 import { usePersonAnalysis } from "@/lib/use-analysis";
-import { Button, Note, PhotoButtons, SliderField, Swatches, Toggle } from "@/components/ui";
 
 export function PrendasPanel() {
   const profile = useStudio((state) => state.profile);
@@ -18,7 +19,7 @@ export function PrendasPanel() {
   const setStudio = useStudio((state) => state.setStudio);
   const setMeasures = useStudio((state) => state.setMeasures);
   const setFace = useStudio((state) => state.setFace);
-  const addGarment = useStudio((state) => state.addGarment);
+  const addGarments = useStudio((state) => state.addGarments);
   const setGarmentZone = useStudio((state) => state.setGarmentZone);
   const removeGarment = useStudio((state) => state.removeGarment);
   const saveFavorite = useStudio((state) => state.saveFavorite);
@@ -41,7 +42,7 @@ export function PrendasPanel() {
         canvas.width = img.width;
         canvas.height = img.height;
         canvas.getContext("2d")?.drawImage(ratio > 0.06 && ratio < 0.97 ? cut : img, 0, 0);
-        cuts.current.set(garment.id, canvas);
+        cuts.current.set(garment.id, cropToBounds(canvas));
       }
       if (!cancel) setCutVersion((value) => value + 1);
     })();
@@ -86,11 +87,16 @@ export function PrendasPanel() {
       meta: `${kindLabel(profile.kind)} · ${profile.heightCm} cm · ${profile.weightKg} kg`,
       preview,
       sources: profile.garments.map((item, index) => ({
-        label: `Prenda ${index + 1}`,
+        label:
+          item.zone === "completo"
+            ? `Prenda ${index + 1} · completo`
+            : `Prenda ${index + 1} · ${item.zone}`,
         blob: item.blob,
       })),
     });
   }
+
+  const faceFound = Boolean(analysis?.landmarks);
 
   return (
     <div className="panel space-y-5">
@@ -116,7 +122,8 @@ export function PrendasPanel() {
         <div className="flex min-h-80 flex-col justify-end rounded-3xl bg-fg p-6 text-bg">
           <p className="font-display text-3xl leading-tight">Elige quién se prueba la ropa.</p>
           <p className="mt-3 max-w-sm text-sm leading-relaxed opacity-80">
-            Hombre, mujer, niño o niña. Después ajustas estatura, peso y color de ojos, y colocas tu cara.
+            Hombre, mujer, niño o niña. Después ajustas estatura, peso y color de ojos, y colocas tu
+            cara.
           </p>
         </div>
       ) : (
@@ -131,6 +138,12 @@ export function PrendasPanel() {
 
       {pending ? <p className="text-sm text-muted">Ajustando tu cara al avatar…</p> : null}
       {error ? <p className="text-sm text-accent">{error}</p> : null}
+      {analysis && !pending && !faceFound ? (
+        <p className="text-sm text-muted">
+          No encontré la cara con claridad, así que usé la foto completa y el color de ojos elegido
+          no se aplicó.
+        </p>
+      ) : null}
       <Note>{note}</Note>
 
       {span ? (
@@ -156,14 +169,19 @@ export function PrendasPanel() {
             <Swatches options={[...EYES]} value={profile.eye} onChange={setEye} />
           </div>
           <Toggle label="Fondo de estudio" checked={profile.studio} onCheckedChange={setStudio} />
-          <Toggle label="Mostrar medidas" checked={profile.measures} onCheckedChange={setMeasures} />
+          <Toggle
+            label="Mostrar medidas"
+            checked={profile.measures}
+            onCheckedChange={setMeasures}
+          />
         </div>
       ) : null}
 
       <section className="space-y-3">
         <h2 className="font-display text-2xl">Tu cara</h2>
         <p className="text-sm leading-relaxed text-muted">
-          La foto no sale de este teléfono. La primera vez se prepara un modelo de visión guardado en la app.
+          La foto no sale de este teléfono. La primera vez se prepara un modelo de visión guardado
+          en la app. Con esta foto se pega tu rostro al avatar.
         </p>
         <PhotoButtons
           capture="user"
@@ -173,19 +191,14 @@ export function PrendasPanel() {
         />
       </section>
 
-      <section className="space-y-3">
-        <h2 className="font-display text-2xl">Prenda</h2>
-        <p className="text-sm leading-relaxed text-muted">
-          Fotografía la prenda sobre un fondo liso. Se recorta y se coloca en la figura.
-        </p>
-        <PhotoButtons
-          takeLabel="Foto de prenda"
-          pickLabel="Elegir prenda"
-          onFile={(file) => void addGarment(file)}
-        />
+      <MorePhotos
+        hint="Fotografía cada prenda sobre un fondo liso. Las fotos que elijas aquí se suman una tras otra al avatar; tu cara y la figura no se cambian."
+        takeLabel="Foto de prenda"
+        onFiles={(files) => void addGarments(files)}
+      >
         <ul className="space-y-3">
           {profile.garments.map((garment, index) => (
-            <li key={garment.id} className="flex items-center gap-3 rounded-2xl bg-surface p-2">
+            <li key={garment.id} className="flex items-center gap-3 rounded-2xl bg-bg/60 p-2">
               <img src={garment.url} alt="" className="size-16 rounded-xl object-cover" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm">Prenda {index + 1}</p>
@@ -217,7 +230,7 @@ export function PrendasPanel() {
             </li>
           ))}
         </ul>
-      </section>
+      </MorePhotos>
 
       <Button
         disabled={!profile.kind || (!profile.faceUrl && profile.garments.length === 0)}

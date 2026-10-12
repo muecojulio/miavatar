@@ -40,11 +40,37 @@ export function canvasToBlob(
   quality = 0.86,
 ): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error("vacio"));
-    }, type, quality);
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("vacio"));
+      },
+      type,
+      quality,
+    );
   });
+}
+
+/**
+ * A small painted chip for a colour (tinte, esmalte) so favorites can show the
+ * shade that was used next to the photos.
+ */
+export async function colorSwatchBlob(hex: string, size = 320): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = hex || "#cfc6bb";
+    ctx.fillRect(0, 0, size, size);
+    const g = ctx.createLinearGradient(0, 0, 0, size);
+    g.addColorStop(0, "rgba(255,255,255,0.35)");
+    g.addColorStop(0.55, "rgba(255,255,255,0)");
+    g.addColorStop(1, "rgba(0,0,0,0.28)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  return canvasToBlob(canvas, "image/png");
 }
 
 export function drawCover(
@@ -54,9 +80,11 @@ export function drawCover(
   y: number,
   w: number,
   h: number,
+  /** 0 keeps the top edge of the photo, 1 the bottom edge, 0.5 centres it. */
+  anchorY = 0.5,
 ) {
   const scale = Math.max(w / img.width, h / img.height);
   const dw = img.width * scale;
   const dh = img.height * scale;
-  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) * anchorY, dw, dh);
 }
