@@ -27,8 +27,9 @@ export function PrivacyPanel({ standalone = false }: { standalone?: boolean }) {
       <div className="space-y-4 text-sm leading-relaxed text-muted">
         <p className="text-fg">Tus fotos se quedan en este teléfono.</p>
         <p>
-          miavatar no crea una cuenta y no envía tu cara, tu cuerpo, tu ropa, tu pelo ni tu mano a
-          un servidor. El recorte, el color y la prueba se calculan en el propio aparato.
+          miavatar no crea una cuenta y no envía tu cara, tu cuerpo, tus prendas, tu pelo, tu mano
+          ni ninguna foto a un servidor. El recorte, la paleta de la prenda y la prueba se calculan
+          en el propio aparato.
         </p>
         <p>
           Los favoritos viven en una base local del navegador, con índices por tipo y por fecha,
@@ -38,6 +39,19 @@ export function PrivacyPanel({ standalone = false }: { standalone?: boolean }) {
         <p>
           La primera apertura usa modelos de visión que ya viajan con la aplicación. Sirven para
           encontrar la cara, el pelo y la mano. No suben la imagen.
+        </p>
+        <p>
+          La pestaña Estilo ofrece dos consultas opcionales a servicios públicos sin clave: al pedir
+          armonías de color se comparte solo el código HEX detectado localmente, y al buscar el
+          clima se comparte el nombre de la ciudad y, si la eliges, sus coordenadas. Las fotos nunca
+          se envían. Como en cualquier conexión web, esos proveedores pueden recibir la dirección IP
+          y los datos técnicos de la solicitud. El resto de la app funciona aunque no uses estas
+          consultas o estés sin conexión.
+        </p>
+        <p>
+          Las ideas de color usan The Color API. El pronóstico usa Open-Meteo; su API pública
+          gratuita está limitada a usos no comerciales y sujeta a sus condiciones y límites. Puedes
+          revisar los enlaces y la atribución dentro de Estilo.
         </p>
         <p>
           No conectamos esta prueba con automatizaciones ni con servicios que pedirían tu foto. Eso
