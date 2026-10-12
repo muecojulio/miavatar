@@ -53,7 +53,7 @@ export const NAILS = [
   { id: "champagne", label: "Champagne", hex: "#c6a36a" },
 ] as const;
 
-export type TabId = "prendas" | "cabello" | "unas" | "favoritos";
+export type TabId = "prendas" | "cabello" | "unas" | "favoritos" | "privacidad" | "instalar";
 
 export function kindLabel(kind: PersonKind | null) {
   return KINDS.find((item) => item.id === kind)?.label ?? "Sin elegir";
