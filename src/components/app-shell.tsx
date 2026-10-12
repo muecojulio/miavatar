@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Hand, Heart, QrCode, Scissors, Shirt, Shield, Sparkles } from "lucide-react";
+import { Hand, Heart, QrCode, Scissors, Shirt, Shield, Sparkles } from "lucide-react";
 import { CabelloPanel } from "@/components/cabello-panel";
 import { Decor } from "@/components/decor";
 import { FavoritosPanel } from "@/components/favoritos-panel";
@@ -9,7 +9,6 @@ import { StylePanel } from "@/components/style-panel";
 import { TabBar, TabPanel, type TabItem } from "@/components/tabs";
 import { TipsTicker, VisionBadge } from "@/components/tips";
 import { ActionToasts, AppToaster } from "@/components/toaster";
-import { IconButton } from "@/components/ui";
 import { UnasPanel } from "@/components/unas-panel";
 import { cn } from "@/lib/cn";
 import { useReducedMotion } from "@/lib/motion";
@@ -27,8 +26,8 @@ const CORE: { id: TabId; label: string; icon: typeof Shirt }[] = [
 ];
 
 const EXTRAS: { id: TabId; label: string; icon: typeof Shirt }[] = [
-  { id: "instalar", label: "Instalar en otro dispositivo", icon: QrCode },
-  { id: "privacidad", label: "Privacidad y datos", icon: Shield },
+  { id: "instalar", label: "Código QR", icon: QrCode },
+  { id: "privacidad", label: "Privacidad", icon: Shield },
 ];
 
 const TIPS = [
@@ -49,7 +48,6 @@ export function AppShell() {
   const favoriteCounts = useStudio((state) => state.favoriteCounts);
   const init = useStudio((state) => state.init);
   const setTab = useStudio((state) => state.setTab);
-  const [lastCore, setLastCore] = useState<TabId>("prendas");
   const [direction, setDirection] = useState<1 | -1>(1);
   const [drag, setDrag] = useState(0);
   const reduced = useReducedMotion();
@@ -61,22 +59,20 @@ export function AppShell() {
     [nails],
   );
   const extra = EXTRAS.some((item) => item.id === tab);
-  const coreTab = extra ? lastCore : tab;
 
-  const tabs: TabItem<TabId>[] = cores.map((item) => ({
-    id: item.id,
-    label: item.label,
-    icon: item.icon,
-    badge: item.id === "favoritos" ? favoriteCounts.all : undefined,
-  }));
+  const tabs: TabItem<TabId>[] = [
+    ...cores.map((item) => ({
+      id: item.id,
+      label: item.label,
+      icon: item.icon,
+      badge: item.id === "favoritos" ? favoriteCounts.all : undefined,
+    })),
+    ...EXTRAS,
+  ];
 
   useEffect(() => {
     void init();
   }, [init]);
-
-  useEffect(() => {
-    if (CORE.some((item) => item.id === tab)) setLastCore(tab);
-  }, [tab]);
 
   function go(next: TabId, move: 1 | -1 = 1) {
     setDirection(move);
@@ -99,7 +95,7 @@ export function AppShell() {
     onDrag: (dx) => setDrag(Math.max(-30, Math.min(30, dx * 0.32))),
     onDragEnd: ({ dx, velocity }) => {
       setDrag(0);
-      const index = cores.findIndex((item) => item.id === coreTab);
+      const index = cores.findIndex((item) => item.id === tab);
       const far = Math.abs(dx) > 76;
       const flick = Math.abs(velocity) > 0.5;
       if (dx < 0 && (far || (flick && velocity < 0))) {
@@ -116,28 +112,14 @@ export function AppShell() {
     <>
       <Decor />
       <main className="relative z-10 mx-auto min-h-dvh max-w-md px-4 pb-32 pt-6 lg:max-w-2xl">
-        <header className="mb-5 flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-2 font-display text-4xl leading-none">
-              <span className="bg-gradient-to-r from-accent-soft via-fg to-accent bg-clip-text text-transparent">
-                miavatar
-              </span>
-              <Sparkles className="animate-float-soft size-5 text-accent" aria-hidden="true" />
-            </h1>
-            <TipsTicker tips={TIPS} />
-          </div>
-          <div className="flex shrink-0 gap-1.5">
-            {EXTRAS.map((item) => (
-              <IconButton
-                key={item.id}
-                label={item.label}
-                icon={item.icon}
-                active={tab === item.id}
-                aria-current={tab === item.id ? "page" : undefined}
-                onClick={() => (tab === item.id ? go(lastCore) : go(item.id))}
-              />
-            ))}
-          </div>
+        <header className="mb-5">
+          <h1 className="flex items-center gap-2 font-display text-4xl leading-none">
+            <span className="bg-gradient-to-r from-accent-soft via-fg to-accent bg-clip-text text-transparent">
+              miavatar
+            </span>
+            <Sparkles className="animate-float-soft size-5 text-accent" aria-hidden="true" />
+          </h1>
+          <TipsTicker tips={TIPS} />
         </header>
 
         {!memoryOk && ready ? (
@@ -150,17 +132,6 @@ export function AppShell() {
         ) : null}
 
         {tab === "prendas" || tab === "cabello" || tab === "unas" ? <VisionBadge /> : null}
-
-        {extra ? (
-          <button
-            type="button"
-            className="tap mb-4 inline-flex min-h-11 items-center gap-2 rounded-full border border-fg/10 bg-surface/70 px-4 text-sm text-muted"
-            onClick={() => go(lastCore, -1)}
-          >
-            <ArrowLeft className="size-4" aria-hidden="true" />
-            Volver al avatar
-          </button>
-        ) : null}
 
         <div
           {...bind}
@@ -181,19 +152,29 @@ export function AppShell() {
             }
           }}
         >
-          {cores.map((item) =>
-            coreTab === item.id ? (
-              <TabPanel key={item.id} id={item.id} idBase={ID_BASE} direction={direction}>
-                {item.id === "prendas" ? <PrendasPanel /> : null}
-                {item.id === "cabello" ? <CabelloPanel /> : null}
-                {item.id === "unas" && nails ? <UnasPanel /> : null}
-                {item.id === "estilo" ? <StylePanel /> : null}
-                {item.id === "favoritos" ? <FavoritosPanel /> : null}
-              </TabPanel>
-            ) : null,
-          )}
-          {tab === "privacidad" ? <PrivacyPanel /> : null}
-          {tab === "instalar" ? <InstallPanel /> : null}
+          {!extra
+            ? cores.map((item) =>
+                tab === item.id ? (
+                  <TabPanel key={item.id} id={item.id} idBase={ID_BASE} direction={direction}>
+                    {item.id === "prendas" ? <PrendasPanel /> : null}
+                    {item.id === "cabello" ? <CabelloPanel /> : null}
+                    {item.id === "unas" && nails ? <UnasPanel /> : null}
+                    {item.id === "estilo" ? <StylePanel /> : null}
+                    {item.id === "favoritos" ? <FavoritosPanel /> : null}
+                  </TabPanel>
+                ) : null,
+              )
+            : null}
+          {tab === "privacidad" ? (
+            <TabPanel id="privacidad" idBase={ID_BASE} direction={direction}>
+              <PrivacyPanel />
+            </TabPanel>
+          ) : null}
+          {tab === "instalar" ? (
+            <TabPanel id="instalar" idBase={ID_BASE} direction={direction}>
+              <InstallPanel />
+            </TabPanel>
+          ) : null}
         </div>
 
         <footer className="mt-10 space-y-2 border-t border-fg/10 pt-5 text-xs leading-relaxed text-muted">
@@ -211,11 +192,12 @@ export function AppShell() {
         <div className="mx-auto max-w-md lg:max-w-2xl">
           <TabBar
             items={tabs}
-            value={coreTab}
+            value={tab}
             onChange={(id) => {
-              const index = cores.findIndex((item) => item.id === id);
-              const current = cores.findIndex((item) => item.id === coreTab);
-              go(id, index >= current ? 1 : -1);
+              if (id === tab) return;
+              const index = tabs.findIndex((item) => item.id === id);
+              const current = tabs.findIndex((item) => item.id === tab);
+              go(id, current === -1 || index > current ? 1 : -1);
             }}
             label="Secciones"
             idBase={ID_BASE}
