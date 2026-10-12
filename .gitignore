@@ -5,7 +5,8 @@ dist
 .nitro
 .tanstack
 *.log
-.grok
+.grok/*
+!.grok/app-env.json
 screenshots
 artifacts
 .DS_Store
