@@ -79,7 +79,8 @@ export type MediaRef = {
   url: string;
 };
 
-export type TabId = "prendas" | "cabello" | "unas" | "favoritos" | "privacidad" | "instalar";
+export type TabId =
+  "prendas" | "cabello" | "unas" | "estilo" | "favoritos" | "privacidad" | "instalar";
 
 export function kindLabel(kind: PersonKind | null) {
   return KINDS.find((item) => item.id === kind)?.label ?? "Sin elegir";

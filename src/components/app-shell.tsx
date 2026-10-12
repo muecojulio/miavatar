@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Hand, Heart, QrCode, Scissors, Shield, Shirt } from "lucide-react";
+import { ArrowLeft, Hand, Heart, QrCode, Scissors, Shield, Shirt, Sparkles } from "lucide-react";
 import { CabelloPanel } from "@/components/cabello-panel";
 import { FavoritosPanel } from "@/components/favoritos-panel";
 import { PrendasPanel } from "@/components/prendas-panel";
+import { StylePanel } from "@/components/style-panel";
 import { PrivacyPanel } from "@/routes/privacidad";
 import { InstallPanel } from "@/components/install-panel";
 import { UnasPanel } from "@/components/unas-panel";
@@ -14,6 +15,7 @@ const TABS: { id: TabId; label: string; icon: typeof Shirt }[] = [
   { id: "prendas", label: "Prendas", icon: Shirt },
   { id: "cabello", label: "Cabello", icon: Scissors },
   { id: "unas", label: "Uñas", icon: Hand },
+  { id: "estilo", label: "Estilo", icon: Sparkles },
   { id: "favoritos", label: "Favoritos", icon: Heart },
 ];
 
@@ -94,6 +96,7 @@ export function AppShell() {
       {tab === "prendas" ? <PrendasPanel /> : null}
       {tab === "cabello" ? <CabelloPanel /> : null}
       {tab === "unas" && nails ? <UnasPanel /> : null}
+      {tab === "estilo" ? <StylePanel /> : null}
       {tab === "favoritos" ? <FavoritosPanel /> : null}
       {tab === "privacidad" ? <PrivacyPanel /> : null}
       {tab === "instalar" ? <InstallPanel /> : null}
