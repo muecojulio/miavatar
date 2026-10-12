@@ -1,0 +1,12 @@
+MediaPipe Vision tasks, models, and wasm
+Copyright Google LLC
+Licensed under the Apache License, Version 2.0
+https://www.apache.org/licenses/LICENSE-2.0
+
+Models:
+- face_landmarker.task
+- hand_landmarker.task
+- selfie_multiclass.tflite (selfie multiclass 256)
+- selfie_segmenter.tflite
+
+They run only on the device. Photos are not uploaded with these files.
