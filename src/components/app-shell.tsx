@@ -1,9 +1,10 @@
 import { useEffect } from "react";
-import { Link } from "@tanstack/react-router";
-import { Hand, Heart, Scissors, Shirt } from "lucide-react";
+import { Hand, Heart, Scissors, Shirt, Shield, QrCode } from "lucide-react";
 import { CabelloPanel } from "@/components/cabello-panel";
 import { FavoritosPanel } from "@/components/favoritos-panel";
 import { PrendasPanel } from "@/components/prendas-panel";
+import { PrivacyPanel } from "@/routes/privacidad";
+import { InstallPanel } from "@/components/install-panel";
 import { UnasPanel } from "@/components/unas-panel";
 import { cn } from "@/lib/cn";
 import { useStudio } from "@/lib/store";
@@ -14,6 +15,8 @@ const TABS: { id: TabId; label: string; icon: typeof Shirt }[] = [
   { id: "cabello", label: "Cabello", icon: Scissors },
   { id: "unas", label: "Uñas", icon: Hand },
   { id: "favoritos", label: "Favoritos", icon: Heart },
+  { id: "privacidad", label: "Privacidad", icon: Shield },
+  { id: "instalar", label: "Instalar", icon: QrCode },
 ];
 
 export function AppShell() {
@@ -32,19 +35,17 @@ export function AppShell() {
 
   return (
     <main className="mx-auto min-h-dvh max-w-md px-4 pb-28 pt-6">
-      <header className="mb-5 flex items-end justify-between gap-4">
+      <header className="mb-5">
         <div>
           <p className="font-display text-4xl leading-none">miavatar</p>
           <p className="mt-2 text-sm text-muted">Mírate antes de usarlo</p>
         </div>
-        <Link to="/privacidad" className="tap mb-1 min-h-11 text-sm text-muted">
-          Privacidad
-        </Link>
       </header>
 
       {!memoryOk && ready ? (
         <p className="mb-4 text-sm text-accent">
-          La memoria de este navegador no está disponible. La prueba funciona, pero no queda guardada.
+          La memoria de este navegador no está disponible. La prueba funciona, pero no queda
+          guardada.
         </p>
       ) : null}
 
@@ -52,9 +53,14 @@ export function AppShell() {
       {tab === "cabello" ? <CabelloPanel /> : null}
       {tab === "unas" && nails ? <UnasPanel /> : null}
       {tab === "favoritos" ? <FavoritosPanel /> : null}
+      {tab === "privacidad" ? <PrivacyPanel /> : null}
+      {tab === "instalar" ? <InstallPanel /> : null}
 
       <nav className="dock fixed inset-x-0 bottom-0 z-10 border-t border-fg/10 bg-bg/95 backdrop-blur-md">
-        <ul className="mx-auto grid max-w-md" style={{ gridTemplateColumns: `repeat(${visible.length}, minmax(0, 1fr))` }}>
+        <ul
+          className="mx-auto grid max-w-md"
+          style={{ gridTemplateColumns: `repeat(${visible.length}, minmax(0, 1fr))` }}
+        >
           {visible.map((item) => {
             const Icon = item.icon;
             const active = tab === item.id;
