@@ -1,18 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { Heart } from "lucide-react";
+import { Heart, Palette, Scissors } from "lucide-react";
 import { MorePhotos } from "@/components/more-photos";
-import { Button, Note, PhotoButtons, SliderField, Swatches, ThumbPicks } from "@/components/ui";
+import { StatPills } from "@/components/stats";
+import { EmptyStage, Stage } from "@/components/stage";
+import {
+  Button,
+  Note,
+  PhotoButtons,
+  SliderField,
+  Swatches,
+  ThumbPicks,
+} from "@/components/ui";
 import { cropToBounds, opaqueRatio, removeBackground } from "@/lib/cutout";
 import { drawHair } from "@/lib/draw-hair";
 import { canvasToBlob, loadImage } from "@/lib/images";
-import { useStudio } from "@/lib/store";
+import { statusFor, useStudio } from "@/lib/store";
 import { DYES, dyeById } from "@/lib/types";
 import { usePersonAnalysis } from "@/lib/use-analysis";
 import { hairCutout } from "@/lib/vision";
 
 export function CabelloPanel() {
   const hair = useStudio((state) => state.hair);
-  const note = useStudio((state) => state.note);
+  const action = useStudio((state) => state.action);
   const setSelfie = useStudio((state) => state.setSelfie);
   const addStyles = useStudio((state) => state.addStyles);
   const setActiveStyle = useStudio((state) => state.setActiveStyle);
@@ -25,9 +34,13 @@ export function CabelloPanel() {
   const { analysis, pending, error } = usePersonAnalysis(hair.selfieUrl);
   const [styleCut, setStyleCut] = useState<HTMLCanvasElement | null>(null);
   const [cutting, setCutting] = useState(false);
+  const [burst, setBurst] = useState(0);
   const dye = dyeById(hair.dye);
   const activeStyle =
     hair.styles.find((item) => item.id === hair.activeStyleId) ?? hair.styles[0] ?? null;
+  const activeIndex = activeStyle
+    ? hair.styles.findIndex((item) => item.id === activeStyle.id) + 1
+    : 0;
 
   useEffect(() => {
     if (!activeStyle) {
@@ -38,10 +51,8 @@ export function CabelloPanel() {
     setCutting(true);
     void (async () => {
       const img = await loadImage(activeStyle.url);
-      // First choice: keep only the hair of the reference photo, so the face of
-      // whoever wears that hairstyle never lands over yours. If the model can't
-      // find hair (a product photo, a wig on a stand), fall back to cutting out
-      // whatever sits on the plain background.
+      // Primero se intenta conservar sólo el pelo de la foto de referencia: la
+      // cara de quien lleva ese peinado nunca se coloca sobre la tuya.
       let chosen: HTMLCanvasElement | null = null;
       const hairOnly = await hairCutout(img);
       if (hairOnly && opaqueRatio(hairOnly) > 0.02) {
@@ -92,6 +103,7 @@ export function CabelloPanel() {
   async function favorite() {
     const canvas = canvasRef.current;
     if (!canvas || !hair.selfieBlob) return;
+    setBurst((value) => value + 1);
     const preview = await canvasToBlob(canvas, "image/jpeg", 0.84);
     const sources: { label: string; blob: Blob }[] = [];
     if (hair.selfieBlob) sources.push({ label: "Tu foto", blob: hair.selfieBlob });
@@ -111,43 +123,59 @@ export function CabelloPanel() {
     });
   }
 
+  const status = statusFor(action, "cabello");
+
   return (
-    <div className="panel space-y-5">
-      <div>
+    <div className="space-y-6">
+      <header className="stagger" style={{ ["--i" as string]: 0 }}>
         <h2 className="font-display text-3xl leading-tight">Peinado y tinte</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
           Sube una foto tuya, uno o varios peinados de referencia y el color. La mezcla se hace
           aquí, sin subir nada.
         </p>
-      </div>
+      </header>
 
       {hair.selfieUrl ? (
-        <div className="overflow-hidden rounded-3xl bg-fg">
-          <canvas
-            ref={canvasRef}
-            className="w-full"
-            aria-label="Vista previa del peinado y el color"
-          />
+        <div className="stagger" style={{ ["--i" as string]: 1 }}>
+          <Stage
+            ariaLabel="Vista previa del peinado y el color"
+            busy={pending || cutting}
+            badge="Tu foto + tu peinado, en local"
+            burstKey={burst}
+          >
+            <canvas ref={canvasRef} className="block w-full" />
+          </Stage>
         </div>
       ) : (
-        <div className="flex min-h-64 flex-col justify-end rounded-3xl bg-fg p-6 text-bg">
-          <p className="font-display text-3xl leading-tight">Empieza con tu foto.</p>
-        </div>
+        <EmptyStage
+          title="Empieza con tu foto."
+          hint="Con tu selfie se detecta el contorno del pelo; después podrás teñirlo y colocar encima el peinado que elijas."
+          tone="berry"
+        />
       )}
 
-      {pending || cutting ? (
-        <p className="text-sm text-muted">Buscando el contorno del pelo…</p>
-      ) : null}
-      {error ? <p className="text-sm text-accent">{error}</p> : null}
-      <p className="text-sm text-muted">
-        {activeStyle
-          ? `Peinado activo: ${hair.styles.findIndex((item) => item.id === activeStyle.id) + 1} de ${hair.styles.length}. Toca otra miniatura para cambiarlo.`
-          : "Todavía no hay un peinado de referencia: el tinte se aplica igual sobre tu pelo."}
-      </p>
-      <Note>{note}</Note>
+      <StatPills
+        label="Resumen del peinado"
+        items={[
+          { id: "dye", label: "Tinte", value: dye.label, icon: Palette },
+          {
+            id: "styles",
+            label: "Peinados",
+            value: activeIndex ? `${activeIndex}/${hair.styles.length}` : "0",
+            icon: Scissors,
+          },
+        ]}
+      />
 
-      <section className="space-y-3">
-        <h3 className="text-sm text-muted">Tu foto</h3>
+      {error ? <Note tone="error">{error}</Note> : null}
+      <Note tone={activeStyle ? "info" : "error"}>
+        {activeStyle
+          ? `Peinado activo: ${activeIndex} de ${hair.styles.length}. Toca otra miniatura para cambiarlo.`
+          : "Todavía no hay un peinado de referencia: el tinte se aplica igual sobre tu pelo."}
+      </Note>
+
+      <section className="space-y-3 stagger" style={{ ["--i" as string]: 2 }}>
+        <h3 className="font-display text-2xl">Tu foto</h3>
         <PhotoButtons
           capture="user"
           takeLabel="Tomar selfie"
@@ -156,31 +184,41 @@ export function CabelloPanel() {
         />
       </section>
 
-      <MorePhotos
-        hint="Cada peinado que subas se suma a los que ya tiene el avatar; toca una miniatura para probarlo. Tu foto no se cambia aquí."
-        takeLabel="Foto del peinado"
-        onFiles={(files) => void addStyles(files)}
-      >
-        <ThumbPicks
-          items={hair.styles.map((item, index) => ({
-            id: item.id,
-            url: item.url,
-            caption: `Peinado ${index + 1}`,
-          }))}
-          activeId={activeStyle?.id ?? null}
-          onPick={setActiveStyle}
-          onRemove={removeStyle}
-          empty={
-            <p className="text-xs text-muted">
-              Sin peinados de referencia. Puedes subir uno o varios a la vez.
-            </p>
-          }
-        />
-      </MorePhotos>
+      <div className="stagger" style={{ ["--i" as string]: 3 }}>
+        <MorePhotos
+          hint="Cada peinado que subas se suma a los que ya tiene el avatar; toca una miniatura para probarlo. Tu foto no se cambia aquí."
+          takeLabel="Foto del peinado"
+          onFiles={(files) => void addStyles(files)}
+        >
+          <ThumbPicks
+            label="Peinados de referencia"
+            items={hair.styles.map((item, index) => ({
+              id: item.id,
+              url: item.url,
+              caption: `Peinado ${index + 1}`,
+            }))}
+            activeId={activeStyle?.id ?? null}
+            onPick={setActiveStyle}
+            onRemove={removeStyle}
+            fadeColor="var(--color-surface)"
+            empty={
+              <p className="rounded-2xl border border-dashed border-fg/15 px-3 py-4 text-xs text-muted">
+                Sin peinados de referencia. Puedes subir uno o varios a la vez.
+              </p>
+            }
+          />
+        </MorePhotos>
+      </div>
 
-      <section className="space-y-3">
-        <h3 className="text-sm text-muted">Color de tinte</h3>
-        <Swatches options={[...DYES]} value={hair.dye} onChange={setDye} />
+      <section className="card space-y-3 p-5 stagger" style={{ ["--i" as string]: 4 }}>
+        <h3 className="font-display text-xl">Color de tinte</h3>
+        <Swatches
+          label="Color de tinte"
+          options={[...DYES]}
+          value={hair.dye}
+          onChange={setDye}
+          fadeColor="var(--color-surface)"
+        />
         {dye.id !== "natural" ? (
           <SliderField
             label="Intensidad"
@@ -195,9 +233,15 @@ export function CabelloPanel() {
         )}
       </section>
 
-      <Button disabled={!hair.selfieUrl} onClick={() => void favorite()}>
-        <Heart className="size-4" />
-        Guardar en favoritos
+      <Button
+        className="w-full"
+        status={status}
+        statusLabel={action.message}
+        disabled={!hair.selfieUrl}
+        icon={Heart}
+        onClick={() => void favorite()}
+      >
+        {status === "success" ? "Guardado" : "Guardar en favoritos"}
       </Button>
     </div>
   );

@@ -1,7 +1,16 @@
 import type { DesignScope, FavoriteKind, PersonKind, Zone } from "@/lib/types";
 
 const DB_NAME = "miavatar";
-const DB_VERSION = 1;
+/**
+ * v2 — índices de favoritos revisados (ver docs/INDICES-Y-RENDIMIENTO.md):
+ * `byKindCreated` compuesto [kind, createdAt] sustituye al índice simple
+ * `byKind`. Con él, filtrar por tipo ya devuelve las filas ordenadas por fecha
+ * y se elimina la ordenación en memoria; para "todos" se usa `byCreated`.
+ */
+const DB_VERSION = 2;
+
+/** Tope de filas que se leen de una sola vez al abrir Favoritos. */
+export const FAVORITES_PAGE = 120;
 
 export type ProfileRecord = {
   kind: PersonKind | null;
@@ -53,10 +62,19 @@ function openDb() {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
+      const tx = request.transaction;
       if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
-      if (!db.objectStoreNames.contains("favorites")) {
-        const store = db.createObjectStore("favorites", { keyPath: "id" });
-        store.createIndex("byKind", "kind", { unique: false });
+      const store = db.objectStoreNames.contains("favorites")
+        ? tx?.objectStore("favorites")
+        : db.createObjectStore("favorites", { keyPath: "id" });
+      if (!store) return;
+      // Índice compuesto: prefijo por tipo + fecha, sirve para filtrar y para
+      // ordenar sin ordenar. El índice simple `byKind` queda cubierto por él.
+      if (!store.indexNames.contains("byKindCreated")) {
+        store.createIndex("byKindCreated", ["kind", "createdAt"], { unique: false });
+      }
+      if (store.indexNames.contains("byKind")) store.deleteIndex("byKind");
+      if (!store.indexNames.contains("byCreated")) {
         store.createIndex("byCreated", "createdAt", { unique: false });
       }
     };
@@ -107,13 +125,61 @@ export function saveNails(record: NailsRecord) {
   return kvSet("nails", record);
 }
 
-export async function queryFavorites(kind: FavoriteKind | "all") {
+/**
+ * Recorre un índice en orden descendente y devuelve hasta `limit` filas.
+ * Al pedir "todo" se lee `byCreated`; al filtrar por tipo, `byKindCreated` con
+ * el rango [kind, 0] … [kind, máximo], que ya viene ordenado por fecha.
+ */
+function readDescending<T>(
+  index: IDBIndex,
+  range: IDBKeyRange | null,
+  limit: number,
+): Promise<T[]> {
+  return new Promise<T[]>((resolve, reject) => {
+    const rows: T[] = [];
+    let settled = false;
+    const request = index.openCursor(range, "prev");
+    request.onsuccess = () => {
+      if (settled) return;
+      const cursor = request.result;
+      if (!cursor || rows.length >= limit) {
+        settled = true;
+        resolve(rows);
+        return;
+      }
+      rows.push(cursor.value as T);
+      cursor.continue();
+    };
+    request.onerror = () => {
+      settled = true;
+      reject(request.error);
+    };
+  });
+}
+
+export async function queryFavorites(kind: FavoriteKind | "all", limit = FAVORITES_PAGE) {
   const db = await openDb();
   const tx = db.transaction("favorites", "readonly");
   const store = tx.objectStore("favorites");
-  const source = kind === "all" ? store.index("byCreated") : store.index("byKind");
-  const rows = await requestOf(kind === "all" ? source.getAll() : source.getAll(kind));
-  return (rows as FavoriteRecord[]).sort((a, b) => b.createdAt - a.createdAt);
+  if (kind === "all") {
+    return readDescending<FavoriteRecord>(store.index("byCreated"), null, limit);
+  }
+  const range = IDBKeyRange.bound([kind, 0], [kind, Number.MAX_SAFE_INTEGER]);
+  return readDescending<FavoriteRecord>(store.index("byKindCreated"), range, limit);
+}
+
+/** Cuántas pruebas hay guardadas, por tipo. Sirve para los filtros. */
+export async function countFavorites(): Promise<{ total: number; byKind: Record<string, number> }> {
+  const db = await openDb();
+  const tx = db.transaction("favorites", "readonly");
+  const store = tx.objectStore("favorites");
+  const total = await requestOf(store.count());
+  const byKind: Record<string, number> = {};
+  for (const kind of ["prenda", "cabello", "unas"] as const) {
+    const range = IDBKeyRange.bound([kind, 0], [kind, Number.MAX_SAFE_INTEGER]);
+    byKind[kind] = await requestOf(store.index("byKindCreated").count(range));
+  }
+  return { total, byKind };
 }
 
 export async function putFavorite(record: FavoriteRecord) {

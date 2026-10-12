@@ -53,4 +53,38 @@ Estilo comparten los datos mínimos indicados arriba; como en cualquier conexió
 puede recibir la dirección IP y datos técnicos de la solicitud. Todo lo guardado localmente se
 puede borrar desde la pestaña Privacidad.
 
+## Accesibilidad e interacción
+
+Los botones, pestañas, carriles, carruseles, deslizamientos para revelar acciones, el selector
+con búsqueda de ciudad, los interruptores y los paneles plegables comparten un mismo sistema:
+objetivos táctiles de 44 px, respuesta de pulsación, estados de carga, éxito y error que no
+dependen solo del color, foco visible, nombres accesibles en cada grupo y control por teclado
+(flechas, Inicio/Fin, Enter y Escape). El deslizamiento nunca es la única vía para llegar a una
+acción, el bloqueo de eje evita cancelar el scroll vertical y todo se reduce a movimiento nulo
+cuando el sistema pide `prefers-reduced-motion`. Detalle completo en
+[docs/INTERACCIONES.md](./docs/INTERACCIONES.md).
+
+## Documentación y comprobaciones
+
+| Documento | Contenido |
+| --- | --- |
+| [docs/POLITICA-DE-PRIVACIDAD.md](./docs/POLITICA-DE-PRIVACIDAD.md) | Política publicada, generada con `npm run docs:legal` desde `src/lib/legal.ts` |
+| [docs/SEGURIDAD.md](./docs/SEGURIDAD.md) | Auditoría, cabeceras aplicadas, correcciones y límites conocidos |
+| [docs/INDICES-Y-RENDIMIENTO.md](./docs/INDICES-Y-RENDIMIENTO.md) | Qué índices se aplicaron (IndexedDB) y por qué Postgres no necesita ninguno |
+| [docs/CACHE.md](./docs/CACHE.md) | Las cuatro capas de caché, sus claves y su borrado |
+| [docs/INTERACCIONES.md](./docs/INTERACCIONES.md) | Sistema de interacción, gestos y accesibilidad |
+| [migrations/README.md](./migrations/README.md) | Por qué esta app no tiene tablas propias en Postgres |
+
+```bash
+npm run dev        # 0.0.0.0:8080
+npm run typecheck  # tipos
+npm run lint       # eslint
+npm test           # pruebas de scripts y de lib
+npm run build      # compilación de producción
+npm run docs:legal # regenera docs/POLITICA-DE-PRIVACIDAD.md
+```
+
+Los avisos de software de terceros (Color Thief, quantize.js, Protovis, tipografías
+`@fontsource` y `qrcode.react`) están en [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
 Producción pensada para Node.js 24.x.

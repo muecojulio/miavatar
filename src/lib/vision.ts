@@ -22,6 +22,64 @@ type Fileset = Awaited<
   ReturnType<(typeof import("@mediapipe/tasks-vision"))["FilesetResolver"]["forVisionTasks"]>
 >;
 
+/**
+ * Progreso de los modelos de visión.
+ *
+ * Todo ocurre en el dispositivo, pero la primera vez hay que traer los modelos
+ * (unos 27 MB) desde la propia app. Publicamos el avance para que la interfaz
+ * pueda explicar qué está pasando en lugar de mostrar un "espera" mudo.
+ */
+
+export type VisionStage = "idle" | "wasm" | "face" | "hair" | "hands" | "ready" | "error";
+
+export type VisionProgress = {
+  stage: VisionStage;
+  /** Etapas ya cargadas, en orden. */
+  loaded: VisionStage[];
+  message: string;
+};
+
+let progress: VisionProgress = { stage: "idle", loaded: [], message: "" };
+const listeners = new Set<(value: VisionProgress) => void>();
+
+const STAGE_MESSAGE: Record<VisionStage, string> = {
+  idle: "",
+  wasm: "Preparando el motor de visión en tu teléfono…",
+  face: "Cargando el detector de rostro…",
+  hair: "Cargando el separador de pelo…",
+  hands: "Cargando el detector de manos…",
+  ready: "Modelos listos. Todo se calcula aquí.",
+  error: "Algún modelo no cargó. La prueba sigue disponible.",
+};
+
+function emit(stage: VisionStage) {
+  if (stage !== "ready" && progress.loaded.includes(stage)) return;
+  progress = {
+    stage,
+    loaded: progress.loaded.includes(stage) ? progress.loaded : [...progress.loaded, stage],
+    message: STAGE_MESSAGE[stage],
+  };
+  listeners.forEach((listener) => listener(progress));
+}
+
+export function onVisionProgress(listener: (value: VisionProgress) => void): () => void {
+  listeners.add(listener);
+  listener(progress);
+  return () => listeners.delete(listener);
+}
+
+export function visionProgress(): VisionProgress {
+  return progress;
+}
+
+/** Precarga los tres modelos: se llama cuando el avatar ya está en pantalla. */
+export async function prewarmVision(): Promise<void> {
+  emit("wasm");
+  const [face, segmentation, hand] = await Promise.all([landmarker(), segmenter(), hands()]);
+  if (!face && !segmentation && !hand) emit("error");
+  else emit("ready");
+}
+
 function asset(path: string) {
   const prefix =
     typeof window === "undefined"
@@ -35,8 +93,10 @@ let filesetPromise: Promise<Fileset> | null = null;
 async function fileset() {
   if (!filesetPromise) {
     filesetPromise = (async () => {
+      emit("wasm");
       const { FilesetResolver } = await import("@mediapipe/tasks-vision");
-      return FilesetResolver.forVisionTasks(asset("wasm"));
+      const resolved = await FilesetResolver.forVisionTasks(asset("wasm"));
+      return resolved;
     })().catch((error) => {
       filesetPromise = null;
       throw error;
@@ -66,6 +126,7 @@ async function segmenter() {
   if (!segmenterPromise) {
     segmenterPromise = (async () => {
       const wasm = await fileset();
+      emit("hair");
       const { ImageSegmenter } = await import("@mediapipe/tasks-vision");
       try {
         const created = await ImageSegmenter.createFromOptions(wasm, {
@@ -97,6 +158,7 @@ async function landmarker() {
   if (!facePromise) {
     facePromise = (async () => {
       const wasm = await fileset();
+      emit("face");
       const { FaceLandmarker } = await import("@mediapipe/tasks-vision");
       return FaceLandmarker.createFromOptions(wasm, {
         baseOptions: { modelAssetPath: asset("face_landmarker.task"), delegate: "CPU" },
@@ -118,6 +180,7 @@ async function hands() {
   if (!handPromise) {
     handPromise = (async () => {
       const wasm = await fileset();
+      emit("hands");
       const { HandLandmarker } = await import("@mediapipe/tasks-vision");
       return HandLandmarker.createFromOptions(wasm, {
         baseOptions: { modelAssetPath: asset("hand_landmarker.task"), delegate: "CPU" },

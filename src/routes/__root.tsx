@@ -1,6 +1,8 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
+import { OfflineCache } from "@/components/offline-cache";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
+import { AppErrorComponent, AppNotFoundComponent } from "@/lib/error-component";
 import { useStudio } from "@/lib/store";
 import { useEffect } from "react";
 import appCss from "../styles.css?url";
@@ -22,6 +24,9 @@ export const Route = createRootRoute({
     ],
   }),
   component: Root,
+  // Una ruta que falle o no exista se ve con la misma identidad visual.
+  errorComponent: AppErrorComponent,
+  notFoundComponent: AppNotFoundComponent,
 });
 
 function Root() {
@@ -37,6 +42,7 @@ function Root() {
       </head>
       <body>
         <PreviewHostBridge />
+        <OfflineCache />
         <AuthProvider>
           <Outlet />
         </AuthProvider>
